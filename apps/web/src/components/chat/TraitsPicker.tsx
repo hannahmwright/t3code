@@ -69,8 +69,8 @@ function getRawContextWindow(
   provider: ProviderKind,
   modelOptions: ProviderOptions | null | undefined,
 ): string | null {
-  if (provider === "claudeAgent") {
-    return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.contextWindow);
+  if (modelOptions && "contextWindow" in modelOptions) {
+    return trimOrNull(modelOptions.contextWindow);
   }
   return null;
 }
@@ -140,6 +140,49 @@ function getSelectedTraits(
   };
 }
 
+function getTraitsSectionVisibility(input: {
+  provider: ProviderKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  prompt: string;
+  modelOptions: ProviderOptions | null | undefined;
+  allowPromptInjectedEffort?: boolean;
+}) {
+  const selected = getSelectedTraits(
+    input.provider,
+    input.models,
+    input.model,
+    input.prompt,
+    input.modelOptions,
+    input.allowPromptInjectedEffort ?? true,
+  );
+
+  const showEffort = selected.effort !== null;
+  const showThinking = selected.thinkingEnabled !== null;
+  const showFastMode = selected.caps.supportsFastMode;
+  const showContextWindow = selected.contextWindowOptions.length > 1;
+
+  return {
+    ...selected,
+    showEffort,
+    showThinking,
+    showFastMode,
+    showContextWindow,
+    hasAnyControls: showEffort || showThinking || showFastMode || showContextWindow,
+  };
+}
+
+export function shouldRenderTraitsControls(input: {
+  provider: ProviderKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  prompt: string;
+  modelOptions: ProviderOptions | null | undefined;
+  allowPromptInjectedEffort?: boolean;
+}): boolean {
+  return getTraitsSectionVisibility(input).hasAnyControls;
+}
+
 export interface TraitsMenuContentProps {
   provider: ProviderKind;
   models: ReadonlyArray<ServerProviderModel>;
@@ -183,7 +226,19 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     contextWindow,
     defaultContextWindow,
     ultrathinkPromptControlled,
-  } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
+    showEffort,
+    showThinking,
+    showFastMode,
+    showContextWindow,
+    hasAnyControls,
+  } = getTraitsSectionVisibility({
+    provider,
+    models,
+    model,
+    prompt,
+    modelOptions,
+    allowPromptInjectedEffort,
+  });
   const defaultEffort = getDefaultEffort(caps);
 
   const handleEffortChange = useCallback(
@@ -217,13 +272,13 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     ],
   );
 
-  if (effort === null && thinkingEnabled === null && contextWindowOptions.length <= 1) {
+  if (!hasAnyControls) {
     return null;
   }
 
   return (
     <>
-      {effort ? (
+      {showEffort ? (
         <>
           <MenuGroup>
             <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">Effort</div>
@@ -246,7 +301,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             </MenuRadioGroup>
           </MenuGroup>
         </>
-      ) : thinkingEnabled !== null ? (
+      ) : showThinking ? (
         <MenuGroup>
           <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Thinking</div>
           <MenuRadioGroup
@@ -262,9 +317,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </MenuRadioGroup>
         </MenuGroup>
       ) : null}
-      {caps.supportsFastMode ? (
+      {showFastMode ? (
         <>
-          <MenuDivider />
+          {showEffort || showThinking ? <MenuDivider /> : null}
           <MenuGroup>
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
             <MenuRadioGroup
@@ -281,9 +336,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </MenuGroup>
         </>
       ) : null}
-      {contextWindowOptions.length > 1 ? (
+      {showContextWindow ? (
         <>
-          <MenuDivider />
+          {showEffort || showThinking || showFastMode ? <MenuDivider /> : null}
           <MenuGroup>
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
               Context Window
@@ -335,28 +390,57 @@ export const TraitsPicker = memo(function TraitsPicker({
     contextWindow,
     defaultContextWindow,
     ultrathinkPromptControlled,
-  } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
+    showEffort,
+    showThinking,
+    showContextWindow,
+  } = getTraitsSectionVisibility({
+    provider,
+    models,
+    model,
+    prompt,
+    modelOptions,
+    allowPromptInjectedEffort,
+  });
 
   const effortLabel = effort
     ? (effortLevels.find((l) => l.value === effort)?.label ?? effort)
     : null;
   const contextWindowLabel =
-    contextWindowOptions.length > 1 && contextWindow !== defaultContextWindow
+    showContextWindow && contextWindow !== defaultContextWindow
       ? (contextWindowOptions.find((o) => o.value === contextWindow)?.label ?? null)
       : null;
-  const triggerLabel = [
-    ultrathinkPromptControlled
-      ? "Ultrathink"
-      : effortLabel
-        ? effortLabel
-        : thinkingEnabled === null
-          ? null
-          : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
-    ...(caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
-    ...(contextWindowLabel ? [contextWindowLabel] : []),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const fastOnlyControl =
+    caps.supportsFastMode && !showEffort && !showThinking && !showContextWindow;
+  if (
+    !shouldRenderTraitsControls({
+      provider,
+      models,
+      model,
+      prompt,
+      modelOptions,
+      allowPromptInjectedEffort,
+    })
+  ) {
+    return null;
+  }
+
+  const triggerLabel = fastOnlyControl
+    ? fastModeEnabled
+      ? "Fast"
+      : "Normal"
+    : [
+        ultrathinkPromptControlled
+          ? "Ultrathink"
+          : effortLabel
+            ? effortLabel
+            : thinkingEnabled === null
+              ? null
+              : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
+        ...(caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
+        ...(contextWindowLabel ? [contextWindowLabel] : []),
+      ]
+        .filter(Boolean)
+        .join(" · ");
 
   const isCodexStyle = provider === "codex";
 
