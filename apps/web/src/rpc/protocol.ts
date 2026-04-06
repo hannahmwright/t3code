@@ -25,11 +25,25 @@ export type WsRpcProtocolClient =
   RpcClientFactory extends Effect.Effect<infer Client, any, any> ? Client : never;
 
 export function createWsRpcProtocolLayer(url?: string) {
-  const resolvedUrl = resolveServerUrl({
+  const baseUrl = resolveServerUrl({
     url,
     protocol: window.location.protocol === "https:" ? "wss" : "ws",
     pathname: "/ws",
   });
+  const runtimeWsToken =
+    typeof window.__T3_WS_TOKEN === "string" && window.__T3_WS_TOKEN.length > 0
+      ? window.__T3_WS_TOKEN
+      : null;
+  const resolvedUrl = (() => {
+    if (!runtimeWsToken) {
+      return baseUrl;
+    }
+    const parsedUrl = new URL(baseUrl);
+    if (!parsedUrl.searchParams.has("token")) {
+      parsedUrl.searchParams.set("token", runtimeWsToken);
+    }
+    return parsedUrl.toString();
+  })();
   const trackingWebSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
     (socketUrl, protocols) => {

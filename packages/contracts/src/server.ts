@@ -204,3 +204,60 @@ export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
+
+export const ServerInstallationId = TrimmedNonEmptyString;
+export type ServerInstallationId = typeof ServerInstallationId.Type;
+
+export const ServerPushSubscription = Schema.Struct({
+  endpoint: TrimmedNonEmptyString,
+  expirationTime: Schema.NullOr(Schema.Number),
+  keys: Schema.Struct({
+    p256dh: TrimmedNonEmptyString,
+    auth: TrimmedNonEmptyString,
+  }),
+});
+export type ServerPushSubscription = typeof ServerPushSubscription.Type;
+
+export const ServerNotificationsStateInput = Schema.Struct({
+  installationId: ServerInstallationId,
+});
+export type ServerNotificationsStateInput = typeof ServerNotificationsStateInput.Type;
+
+export const ServerNotificationsState = Schema.Struct({
+  supported: Schema.Boolean,
+  subscribed: Schema.Boolean,
+  vapidPublicKey: Schema.NullOr(TrimmedNonEmptyString),
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerNotificationsState = typeof ServerNotificationsState.Type;
+
+export const ServerUpsertPushSubscriptionInput = Schema.Struct({
+  installationId: ServerInstallationId,
+  subscription: ServerPushSubscription,
+  userAgent: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerUpsertPushSubscriptionInput = typeof ServerUpsertPushSubscriptionInput.Type;
+
+export const ServerRemovePushSubscriptionInput = Schema.Struct({
+  installationId: ServerInstallationId,
+});
+export type ServerRemovePushSubscriptionInput = typeof ServerRemovePushSubscriptionInput.Type;
+
+export const ServerUpdatePresenceInput = Schema.Struct({
+  installationId: ServerInstallationId,
+  activeThreadId: Schema.NullOr(ThreadId),
+  visible: Schema.Boolean,
+});
+export type ServerUpdatePresenceInput = typeof ServerUpdatePresenceInput.Type;
+
+export class ServerNotificationsError extends Schema.TaggedErrorClass<ServerNotificationsError>()(
+  "ServerNotificationsError",
+  {
+    detail: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}

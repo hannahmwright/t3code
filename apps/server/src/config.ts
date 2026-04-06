@@ -46,6 +46,9 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly otlpMetricsUrl: string | undefined;
   readonly otlpExportIntervalMs: number;
   readonly otlpServiceName: string;
+  readonly vapidPublicKey: string | undefined;
+  readonly vapidPrivateKey: string | undefined;
+  readonly vapidSubject: string | undefined;
   readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
@@ -137,6 +140,9 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           otlpMetricsUrl: undefined,
           otlpExportIntervalMs: 10_000,
           otlpServiceName: "t3-server",
+          vapidPublicKey: undefined,
+          vapidPrivateKey: undefined,
+          vapidSubject: undefined,
           cwd,
           baseDir,
           ...derivedPaths,

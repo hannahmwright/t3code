@@ -140,6 +140,11 @@ export type ProjectScript = typeof ProjectScript.Type;
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
+  emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -303,6 +308,9 @@ export const ProjectCreateCommand = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
@@ -313,6 +321,9 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -646,6 +657,11 @@ export const OrchestrationActorKind = Schema.Literals(["client", "server", "prov
 export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -656,6 +672,9 @@ export const ProjectCreatedPayload = Schema.Struct({
 export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),

@@ -27,6 +27,8 @@ const readModel: OrchestrationReadModel = {
     {
       id: ProjectId.makeUnsafe("project-a"),
       title: "Project A",
+      emoji: null,
+      groupName: null,
       workspaceRoot: "/tmp/project-a",
       defaultModelSelection: {
         provider: "codex",
@@ -40,6 +42,8 @@ const readModel: OrchestrationReadModel = {
     {
       id: ProjectId.makeUnsafe("project-b"),
       title: "Project B",
+      emoji: null,
+      groupName: null,
       workspaceRoot: "/tmp/project-b",
       defaultModelSelection: {
         provider: "codex",

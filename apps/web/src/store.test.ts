@@ -55,6 +55,9 @@ function makeState(thread: Thread): AppState {
       {
         id: ProjectId.makeUnsafe("project-1"),
         name: "Project",
+        emoji: null,
+        groupName: null,
+        groupEmoji: null,
         cwd: "/tmp/project",
         defaultModelSelection: {
           provider: "codex",
@@ -132,6 +135,9 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
       {
         id: ProjectId.makeUnsafe("project-1"),
         title: "Project",
+        emoji: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/tmp/project",
         defaultModelSelection: {
           provider: "codex",
@@ -153,6 +159,9 @@ function makeReadModelProject(
   return {
     id: ProjectId.makeUnsafe("project-1"),
     title: "Project",
+    emoji: null,
+    groupName: null,
+    groupEmoji: null,
     workspaceRoot: "/tmp/project",
     defaultModelSelection: {
       provider: "codex",
@@ -257,6 +266,9 @@ describe("store read model sync", () => {
         {
           id: project2,
           name: "Project 2",
+          emoji: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-2",
           defaultModelSelection: {
             provider: "codex",
@@ -267,6 +279,9 @@ describe("store read model sync", () => {
         {
           id: project1,
           name: "Project 1",
+          emoji: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-1",
           defaultModelSelection: {
             provider: "codex",
@@ -359,6 +374,9 @@ describe("incremental orchestration updates", () => {
         {
           id: originalProjectId,
           name: "Project",
+          emoji: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project",
           defaultModelSelection: {
             provider: "codex",
@@ -378,6 +396,9 @@ describe("incremental orchestration updates", () => {
       makeEvent("project.created", {
         projectId: recreatedProjectId,
         title: "Project Recreated",
+        emoji: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/tmp/project",
         defaultModelSelection: {
           provider: "codex",
@@ -395,6 +416,24 @@ describe("incremental orchestration updates", () => {
     expect(next.projects[0]?.name).toBe("Project Recreated");
   });
 
+  it("applies project.meta-updated emoji and folder changes", () => {
+    const state = makeState(makeThread());
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("project.meta-updated", {
+        projectId: ProjectId.makeUnsafe("project-1"),
+        emoji: "🧪",
+        groupName: "Experiments",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+    );
+
+    expect(next.projects[0]?.emoji).toBe("🧪");
+    expect(next.projects[0]?.groupName).toBe("Experiments");
+    expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:01.000Z");
+  });
+
   it("removes stale project index entries when thread.created recreates a thread under a new project", () => {
     const originalProjectId = ProjectId.makeUnsafe("project-1");
     const recreatedProjectId = ProjectId.makeUnsafe("project-2");
@@ -408,6 +447,9 @@ describe("incremental orchestration updates", () => {
         {
           id: originalProjectId,
           name: "Project 1",
+          emoji: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-1",
           defaultModelSelection: {
             provider: "codex",
@@ -418,6 +460,9 @@ describe("incremental orchestration updates", () => {
         {
           id: recreatedProjectId,
           name: "Project 2",
+          emoji: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-2",
           defaultModelSelection: {
             provider: "codex",

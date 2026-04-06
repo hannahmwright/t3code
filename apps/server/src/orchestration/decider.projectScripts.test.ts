@@ -58,6 +58,8 @@ describe("decider project scripts", () => {
         payload: {
           projectId: asProjectId("project-scripts"),
           title: "Scripts",
+          emoji: null,
+          groupName: null,
           workspaceRoot: "/tmp/scripts",
           defaultModelSelection: null,
           scripts: [],
@@ -112,6 +114,8 @@ describe("decider project scripts", () => {
         payload: {
           projectId: asProjectId("project-1"),
           title: "Project",
+          emoji: null,
+          groupName: null,
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
@@ -221,6 +225,8 @@ describe("decider project scripts", () => {
         payload: {
           projectId: asProjectId("project-1"),
           title: "Project",
+          emoji: null,
+          groupName: null,
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
@@ -303,6 +309,8 @@ describe("decider project scripts", () => {
         payload: {
           projectId: asProjectId("project-1"),
           title: "Project",
+          emoji: null,
+          groupName: null,
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],

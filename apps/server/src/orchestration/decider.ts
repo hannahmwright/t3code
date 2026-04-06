@@ -76,6 +76,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           projectId: command.projectId,
           title: command.title,
+          emoji: command.emoji ?? null,
+          groupName: command.groupName ?? null,
+          groupEmoji: command.groupEmoji ?? null,
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           scripts: [],
@@ -103,6 +106,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.emoji !== undefined ? { emoji: command.emoji } : {}),
+          ...(command.groupName !== undefined ? { groupName: command.groupName } : {}),
+          ...(command.groupEmoji !== undefined ? { groupEmoji: command.groupEmoji } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
           ...(command.defaultModelSelection !== undefined
             ? { defaultModelSelection: command.defaultModelSelection }

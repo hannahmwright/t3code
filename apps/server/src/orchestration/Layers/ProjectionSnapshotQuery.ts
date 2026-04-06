@@ -172,6 +172,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           project_id AS "projectId",
           title,
+          emoji,
+          group_name AS "groupName",
+          group_emoji AS "groupEmoji",
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
@@ -364,6 +367,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           project_id AS "projectId",
           title,
+          emoji,
+          group_name AS "groupName",
+          group_emoji AS "groupEmoji",
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
@@ -655,6 +661,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => ({
             id: row.projectId,
             title: row.title,
+            emoji: row.emoji,
+            groupName: row.groupName,
+            groupEmoji: row.groupEmoji ?? null,
             workspaceRoot: row.workspaceRoot,
             defaultModelSelection: row.defaultModelSelection,
             scripts: row.scripts,
@@ -737,6 +746,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             (row): OrchestrationProject => ({
               id: row.projectId,
               title: row.title,
+              emoji: row.emoji,
+              groupName: row.groupName,
+              groupEmoji: row.groupEmoji ?? null,
               workspaceRoot: row.workspaceRoot,
               defaultModelSelection: row.defaultModelSelection,
               scripts: row.scripts,

@@ -246,6 +246,9 @@ describe("wsNativeApi", () => {
       payload: {
         projectId: ProjectId.makeUnsafe("project-1"),
         title: "Project",
+        emoji: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/tmp/workspace",
         defaultModelSelection: {
           provider: "codex",

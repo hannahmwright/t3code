@@ -26,6 +26,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       yield* projects.upsert({
         projectId: ProjectId.makeUnsafe("project-null-options"),
         title: "Null options project",
+        emoji: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/tmp/project-null-options",
         defaultModelSelection: {
           provider: "codex",

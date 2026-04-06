@@ -14,6 +14,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
+  ServerNotificationsError,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -47,6 +48,7 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
+import { NotificationsService } from "./notifications/Services/NotificationsService";
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -67,6 +69,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+    const notifications = yield* NotificationsService;
     const serverCommandId = (tag: string) =>
       CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -531,6 +534,66 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         observeRpcEffect(WS_METHODS.serverUpdateSettings, serverSettings.updateSettings(patch), {
           "rpc.aggregate": "server",
         }),
+      [WS_METHODS.serverGetNotificationsState]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.serverGetNotificationsState,
+          notifications.getState(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ServerNotificationsError)(cause)
+                ? cause
+                : new ServerNotificationsError({
+                    detail: "Failed to load notification state.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.serverUpsertPushSubscription]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.serverUpsertPushSubscription,
+          notifications.upsertPushSubscription(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ServerNotificationsError)(cause)
+                ? cause
+                : new ServerNotificationsError({
+                    detail: "Failed to save push subscription.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.serverRemovePushSubscription]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.serverRemovePushSubscription,
+          notifications.removePushSubscription(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ServerNotificationsError)(cause)
+                ? cause
+                : new ServerNotificationsError({
+                    detail: "Failed to remove push subscription.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.serverUpdatePresence]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.serverUpdatePresence,
+          notifications.updatePresence(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ServerNotificationsError)(cause)
+                ? cause
+                : new ServerNotificationsError({
+                    detail: "Failed to update notification presence.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "server" },
+        ),
       [WS_METHODS.projectsSearchEntries]: (input) =>
         observeRpcEffect(
           WS_METHODS.projectsSearchEntries,

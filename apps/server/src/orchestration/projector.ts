@@ -182,6 +182,9 @@ export function projectEvent(
           const nextProject = {
             id: payload.projectId,
             title: payload.title,
+            emoji: payload.emoji,
+            groupName: payload.groupName,
+            groupEmoji: payload.groupEmoji ?? null,
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
@@ -210,6 +213,9 @@ export function projectEvent(
               ? {
                   ...project,
                   ...(payload.title !== undefined ? { title: payload.title } : {}),
+                  ...(payload.emoji !== undefined ? { emoji: payload.emoji } : {}),
+                  ...(payload.groupName !== undefined ? { groupName: payload.groupName } : {}),
+                  ...(payload.groupEmoji !== undefined ? { groupEmoji: payload.groupEmoji } : {}),
                   ...(payload.workspaceRoot !== undefined
                     ? { workspaceRoot: payload.workspaceRoot }
                     : {}),

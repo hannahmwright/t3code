@@ -66,3 +66,9 @@ Open from any device in your tailnet:
 `http://<tailnet-ip>:3773`
 
 You can also bind `--host 0.0.0.0` and connect through the Tailnet IP, but binding directly to the Tailnet IP limits exposure.
+
+## 3) HTTPS PWA deployment
+
+If you want installability, service workers, and background web push notifications, serve T3 from a real HTTPS hostname instead of a raw LAN or Tailnet URL.
+
+See [docs/https-pwa-deploy.md](./docs/https-pwa-deploy.md) for the production-style deployment flow and Cloudflare hostname notes.

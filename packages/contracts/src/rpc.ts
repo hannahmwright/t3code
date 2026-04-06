@@ -66,8 +66,14 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerNotificationsError,
+  ServerNotificationsState,
+  ServerNotificationsStateInput,
+  ServerRemovePushSubscriptionInput,
   ServerLifecycleStreamEvent,
   ServerProviderUpdatedPayload,
+  ServerUpdatePresenceInput,
+  ServerUpsertPushSubscriptionInput,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server";
@@ -111,6 +117,10 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverGetNotificationsState: "server.getNotificationsState",
+  serverUpsertPushSubscription: "server.upsertPushSubscription",
+  serverRemovePushSubscription: "server.removePushSubscription",
+  serverUpdatePresence: "server.updatePresence",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -147,6 +157,36 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: ServerSettingsError,
+});
+
+export const WsServerGetNotificationsStateRpc = Rpc.make(WS_METHODS.serverGetNotificationsState, {
+  payload: ServerNotificationsStateInput,
+  success: ServerNotificationsState,
+  error: ServerNotificationsError,
+});
+
+export const WsServerUpsertPushSubscriptionRpc = Rpc.make(
+  WS_METHODS.serverUpsertPushSubscription,
+  {
+    payload: ServerUpsertPushSubscriptionInput,
+    success: Schema.Void,
+    error: ServerNotificationsError,
+  },
+);
+
+export const WsServerRemovePushSubscriptionRpc = Rpc.make(
+  WS_METHODS.serverRemovePushSubscription,
+  {
+    payload: ServerRemovePushSubscriptionInput,
+    success: Schema.Void,
+    error: ServerNotificationsError,
+  },
+);
+
+export const WsServerUpdatePresenceRpc = Rpc.make(WS_METHODS.serverUpdatePresence, {
+  payload: ServerUpdatePresenceInput,
+  success: Schema.Void,
+  error: ServerNotificationsError,
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -340,6 +380,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerGetNotificationsStateRpc,
+  WsServerUpsertPushSubscriptionRpc,
+  WsServerRemovePushSubscriptionRpc,
+  WsServerUpdatePresenceRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

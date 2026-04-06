@@ -4,7 +4,26 @@ import { resolveServerUrl } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
-export function ProjectFavicon({ cwd, className }: { cwd: string; className?: string }) {
+export function ProjectFavicon({
+  cwd,
+  emoji,
+  className,
+}: {
+  cwd: string;
+  emoji?: string | null;
+  className?: string;
+}) {
+  if (emoji) {
+    return (
+      <span
+        aria-hidden="true"
+        className={`inline-flex size-3.5 shrink-0 items-center justify-center text-sm leading-none ${className ?? ""}`}
+      >
+        {emoji}
+      </span>
+    );
+  }
+
   const src = resolveServerUrl({
     protocol: "http",
     pathname: "/api/project-favicon",

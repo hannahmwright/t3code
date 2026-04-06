@@ -260,6 +260,9 @@ function createSnapshotForTargetUser(options: {
       {
         id: PROJECT_ID,
         title: "Project",
+        emoji: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/repo/project",
         defaultModelSelection: {
           provider: "codex",

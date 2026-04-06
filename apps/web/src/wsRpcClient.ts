@@ -96,6 +96,14 @@ export interface WsRpcClient {
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
+    readonly getNotificationsState: RpcUnaryMethod<typeof WS_METHODS.serverGetNotificationsState>;
+    readonly upsertPushSubscription: RpcUnaryMethod<
+      typeof WS_METHODS.serverUpsertPushSubscription
+    >;
+    readonly removePushSubscription: RpcUnaryMethod<
+      typeof WS_METHODS.serverRemovePushSubscription
+    >;
+    readonly updatePresence: RpcUnaryMethod<typeof WS_METHODS.serverUpdatePresence>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
   };
@@ -213,6 +221,14 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
+      getNotificationsState: (input) =>
+        transport.request((client) => client[WS_METHODS.serverGetNotificationsState](input)),
+      upsertPushSubscription: (input) =>
+        transport.request((client) => client[WS_METHODS.serverUpsertPushSubscription](input)),
+      removePushSubscription: (input) =>
+        transport.request((client) => client[WS_METHODS.serverRemovePushSubscription](input)),
+      updatePresence: (input) =>
+        transport.request((client) => client[WS_METHODS.serverUpdatePresence](input)),
       subscribeConfig: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeServerConfig]({}),

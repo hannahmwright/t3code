@@ -100,6 +100,8 @@ describe("OrchestrationEngine", () => {
         {
           id: asProjectId("project-bootstrap"),
           title: "Bootstrap Project",
+          emoji: null,
+          groupName: null,
           workspaceRoot: "/tmp/project-bootstrap",
           defaultModelSelection: {
             provider: "codex" as const,

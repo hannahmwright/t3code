@@ -105,6 +105,18 @@ const EnvServerConfig = Config.all({
     Config.withDefault(10_000),
   ),
   otlpServiceName: Config.string("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
+  vapidPublicKey: Config.string("T3CODE_VAPID_PUBLIC_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  vapidPrivateKey: Config.string("T3CODE_VAPID_PRIVATE_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  vapidSubject: Config.string("T3CODE_VAPID_SUBJECT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   mode: Config.schema(RuntimeMode, "T3CODE_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -317,6 +329,9 @@ export const resolveServerConfig = (
         persistedObservabilitySettings.otlpMetricsUrl,
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
+      vapidPublicKey: env.vapidPublicKey,
+      vapidPrivateKey: env.vapidPrivateKey,
+      vapidSubject: env.vapidSubject,
       mode,
       port,
       cwd,

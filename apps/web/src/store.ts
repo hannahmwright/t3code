@@ -183,6 +183,9 @@ function mapProject(project: OrchestrationReadModel["projects"][number]): Projec
   return {
     id: project.id,
     name: project.title,
+    emoji: project.emoji,
+    groupName: project.groupName,
+    groupEmoji: project.groupEmoji ?? null,
     cwd: project.workspaceRoot,
     defaultModelSelection: project.defaultModelSelection
       ? normalizeModelSelection(project.defaultModelSelection)
@@ -601,6 +604,9 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       const nextProject = mapProject({
         id: event.payload.projectId,
         title: event.payload.title,
+        emoji: event.payload.emoji,
+        groupName: event.payload.groupName,
+        groupEmoji: event.payload.groupEmoji ?? null,
         workspaceRoot: event.payload.workspaceRoot,
         defaultModelSelection: event.payload.defaultModelSelection,
         scripts: event.payload.scripts,
@@ -621,6 +627,9 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       const projects = updateProject(state.projects, event.payload.projectId, (project) => ({
         ...project,
         ...(event.payload.title !== undefined ? { name: event.payload.title } : {}),
+        ...(event.payload.emoji !== undefined ? { emoji: event.payload.emoji } : {}),
+        ...(event.payload.groupName !== undefined ? { groupName: event.payload.groupName } : {}),
+        ...(event.payload.groupEmoji !== undefined ? { groupEmoji: event.payload.groupEmoji } : {}),
         ...(event.payload.workspaceRoot !== undefined ? { cwd: event.payload.workspaceRoot } : {}),
         ...(event.payload.defaultModelSelection !== undefined
           ? {

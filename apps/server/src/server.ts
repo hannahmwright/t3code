@@ -49,6 +49,8 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem"
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner";
 import { ObservabilityLive } from "./observability/Layers/Observability";
+import { NotificationsServiceLive } from "./notifications/Layers/NotificationsService";
+import { PushSubscriptionRepositoryLive } from "./persistence/Layers/PushSubscriptions";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -162,6 +164,12 @@ const ProviderLayerLive = Layer.unwrap(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
+const NotificationsLayerLive = NotificationsServiceLive.pipe(
+  Layer.provideMerge(PushSubscriptionRepositoryLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(SqlitePersistenceLayerLive),
+);
+
 const GitManagerLayerLive = GitManagerLive.pipe(
   Layer.provideMerge(ProjectSetupScriptRunnerLive),
   Layer.provideMerge(GitCoreLive),
@@ -199,6 +207,7 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
+  Layer.provideMerge(NotificationsLayerLive),
 
   // Misc.
   Layer.provideMerge(AnalyticsServiceLayerLive),

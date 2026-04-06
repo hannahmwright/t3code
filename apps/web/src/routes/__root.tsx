@@ -1,7 +1,7 @@
 import {
   OrchestrationEvent,
+  ThreadId,
   type ServerLifecycleWelcomePayload,
-  type ThreadId,
 } from "@t3tools/contracts";
 import {
   Outlet,
@@ -24,7 +24,7 @@ import {
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { readNativeApi } from "../nativeApi";
+import { ensureNativeApi, readNativeApi } from "../nativeApi";
 import {
   getServerConfigUpdatedNotification,
   ServerConfigUpdatedNotification,
@@ -49,6 +49,7 @@ import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
 import { deriveReplayRetryDecision } from "../orchestrationRecovery";
 import { getWsRpcClient } from "~/wsRpcClient";
+import { getOrCreateInstallationId } from "../notifications";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -56,7 +57,16 @@ export const Route = createRootRouteWithContext<{
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
   head: () => ({
-    meta: [{ name: "title", content: APP_DISPLAY_NAME }],
+    meta: [
+      { name: "title", content: APP_DISPLAY_NAME },
+      { name: "theme-color", content: "#0f172a" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
+    ],
+    links: [
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+    ],
   }),
 });
 
@@ -77,6 +87,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <ServerStateBootstrap />
+        <NotificationsPresenceCoordinator />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
@@ -201,8 +212,70 @@ function coalesceOrchestrationUiEvents(
 const REPLAY_RECOVERY_RETRY_DELAY_MS = 100;
 const MAX_NO_PROGRESS_REPLAY_RETRIES = 3;
 
+function resolveActiveThreadIdFromPathname(pathname: string): ThreadId | null {
+  const match = pathname.match(/^\/([^/]+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const threadId = decodeURIComponent(match[1] ?? "");
+  if (!threadId || threadId === "settings") {
+    return null;
+  }
+
+  return ThreadId.makeUnsafe(threadId);
+}
+
 function ServerStateBootstrap() {
   useEffect(() => startServerStateSync(getWsRpcClient().server), []);
+
+  return null;
+}
+
+function NotificationsPresenceCoordinator() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const installationIdRef = useRef<string | null>(null);
+  if (installationIdRef.current === null) {
+    installationIdRef.current = getOrCreateInstallationId();
+  }
+
+  const syncPresence = useEffectEvent(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    void ensureNativeApi()
+      .server.updatePresence({
+        installationId: installationIdRef.current ?? getOrCreateInstallationId(),
+        activeThreadId: resolveActiveThreadIdFromPathname(pathname),
+        visible: document.visibilityState === "visible",
+      })
+      .catch(() => undefined);
+  });
+
+  useEffect(() => {
+    syncPresence();
+  }, [pathname, syncPresence]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const handleVisibility = () => {
+      syncPresence();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+    window.addEventListener("pagehide", handleVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+      window.removeEventListener("pagehide", handleVisibility);
+    };
+  }, [syncPresence]);
 
   return null;
 }

@@ -26,7 +26,12 @@ import type {
 } from "./project";
 import type {
   ServerConfig,
+  ServerNotificationsState,
+  ServerNotificationsStateInput,
+  ServerRemovePushSubscriptionInput,
   ServerProviderUpdatedPayload,
+  ServerUpdatePresenceInput,
+  ServerUpsertPushSubscriptionInput,
   ServerUpsertKeybindingResult,
 } from "./server";
 import type {
@@ -180,6 +185,12 @@ export interface NativeApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    getNotificationsState: (
+      input: ServerNotificationsStateInput,
+    ) => Promise<ServerNotificationsState>;
+    upsertPushSubscription: (input: ServerUpsertPushSubscriptionInput) => Promise<void>;
+    removePushSubscription: (input: ServerRemovePushSubscriptionInput) => Promise<void>;
+    updatePresence: (input: ServerUpdatePresenceInput) => Promise<void>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

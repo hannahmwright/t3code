@@ -10,6 +10,8 @@ export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
   name: string;
+  groupName: string | null;
+  groupEmoji: string | null;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
@@ -441,6 +443,75 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   };
 }
 
+export function normalizeSidebarThreadSearchQuery(query: string): string {
+  return query.trim().toLocaleLowerCase();
+}
+
+export interface SidebarSearchMatchRange {
+  start: number;
+  end: number;
+}
+
+export interface SidebarThreadSearchMatch {
+  titleMatch: SidebarSearchMatchRange | null;
+  matchedInMessages: boolean;
+}
+
+function resolveSidebarSearchMatchRange(
+  value: string,
+  normalizedQuery: string,
+): SidebarSearchMatchRange | null {
+  if (normalizedQuery.length === 0) {
+    return null;
+  }
+
+  const start = value.toLocaleLowerCase().indexOf(normalizedQuery);
+  if (start === -1) {
+    return null;
+  }
+
+  return {
+    start,
+    end: start + normalizedQuery.length,
+  };
+}
+
+export function resolveSidebarThreadSearchMatch<
+  T extends Pick<Thread, "title"> & {
+    messages?: ReadonlyArray<Pick<Thread["messages"][number], "text">>;
+  },
+>(thread: T, normalizedQuery: string): SidebarThreadSearchMatch | null {
+  if (normalizedQuery.length === 0) {
+    return null;
+  }
+
+  const titleMatch = resolveSidebarSearchMatchRange(thread.title, normalizedQuery);
+  const matchedInMessages =
+    thread.messages?.some(
+      (message) => resolveSidebarSearchMatchRange(message.text, normalizedQuery) !== null,
+    ) ?? false;
+
+  if (titleMatch === null && !matchedInMessages) {
+    return null;
+  }
+
+  return {
+    matchedInMessages,
+    titleMatch,
+  };
+}
+
+export function matchesSidebarThreadSearch<
+  T extends Pick<Thread, "title"> & {
+    messages?: ReadonlyArray<Pick<Thread["messages"][number], "text">>;
+  },
+>(
+  thread: T,
+  normalizedQuery: string,
+): boolean {
+  return normalizedQuery.length === 0 || resolveSidebarThreadSearchMatch(thread, normalizedQuery) !== null;
+}
+
 function toSortableTimestamp(iso: string | undefined): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
@@ -574,4 +645,42 @@ export function sortProjectsForSidebar<
     if (byTimestamp !== 0) return byTimestamp;
     return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
   });
+}
+
+export interface SidebarProjectSection<TProject> {
+  key: string;
+  groupName: string | null;
+  groupEmoji: string | null;
+  projects: TProject[];
+}
+
+export function groupProjectsForSidebar<TProject extends { project: SidebarProject }>(
+  projects: readonly TProject[],
+): SidebarProjectSection<TProject>[] {
+  const sections: SidebarProjectSection<TProject>[] = [];
+  const sectionByKey = new Map<string, SidebarProjectSection<TProject>>();
+
+  for (const project of projects) {
+    const groupName = project.project.groupName;
+    const key = groupName === null ? "__ungrouped__" : `group:${groupName}`;
+    const existingSection = sectionByKey.get(key);
+    if (existingSection) {
+      if (existingSection.groupEmoji === null && project.project.groupEmoji !== null) {
+        existingSection.groupEmoji = project.project.groupEmoji;
+      }
+      existingSection.projects.push(project);
+      continue;
+    }
+
+    const nextSection: SidebarProjectSection<TProject> = {
+      key,
+      groupName,
+      groupEmoji: project.project.groupEmoji,
+      projects: [project],
+    };
+    sectionByKey.set(key, nextSection);
+    sections.push(nextSection);
+  }
+
+  return sections;
 }

@@ -15,6 +15,9 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 export const ProjectionProject = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
+  emoji: Schema.NullOr(Schema.String),
+  groupName: Schema.NullOr(Schema.String),
+  groupEmoji: Schema.NullOr(Schema.String),
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),

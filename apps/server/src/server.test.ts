@@ -80,6 +80,10 @@ import {
 } from "./observability/Services/BrowserTraceCollector.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import {
+  NotificationsService,
+  type NotificationsServiceShape,
+} from "./notifications/Services/NotificationsService.ts";
+import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
@@ -103,6 +107,8 @@ const makeDefaultOrchestrationReadModel = () => {
       {
         id: defaultProjectId,
         title: "Default Project",
+        emoji: null,
+        groupName: null,
         workspaceRoot: "/tmp/default-project",
         defaultModelSelection,
         scripts: [],
@@ -270,6 +276,7 @@ const buildAppUnderTest = (options?: {
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    notifications?: Partial<NotificationsServiceShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -289,6 +296,9 @@ const buildAppUnderTest = (options?: {
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
       otlpServiceName: "t3-server",
+      vapidPublicKey: undefined,
+      vapidPrivateKey: undefined,
+      vapidSubject: undefined,
       mode: "web",
       port: 0,
       host: "127.0.0.1",
@@ -416,6 +426,21 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.serverRuntimeStartup,
         }),
       ),
+      Layer.provide(
+        Layer.mock(NotificationsService)({
+          getState: () =>
+            Effect.succeed({
+              supported: false,
+              subscribed: false,
+              vapidPublicKey: null,
+              reason: "Notifications are disabled in tests.",
+            }),
+          upsertPushSubscription: () => Effect.void,
+          removePushSubscription: () => Effect.void,
+          updatePresence: () => Effect.void,
+          ...options?.layers?.notifications,
+        }),
+      ),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
@@ -468,6 +493,29 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/");
       assert.equal(response.status, 200);
       assert.include(yield* response.text, "router-static-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("injects the websocket auth token into served html when auth is enabled", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-auth-" });
+      const indexPath = path.join(staticDir, "index.html");
+      yield* fileSystem.writeFileString(indexPath, "<html><head></head><body>router-auth-ok</body></html>");
+
+      yield* buildAppUnderTest({
+        config: {
+          staticDir,
+          authToken: "secret-token",
+        },
+      });
+
+      const response = yield* HttpClient.get("/");
+      const body = yield* response.text;
+      assert.equal(response.status, 200);
+      assert.include(body, "router-auth-ok");
+      assert.include(body, 'window.__T3_WS_TOKEN="secret-token"');
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1886,6 +1934,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           {
             id: ProjectId.makeUnsafe("project-a"),
             title: "Project A",
+            emoji: null,
+            groupName: null,
             workspaceRoot: "/tmp/project-a",
             defaultModelSelection,
             scripts: [],

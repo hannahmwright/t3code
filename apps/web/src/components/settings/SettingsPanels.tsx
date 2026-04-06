@@ -18,7 +18,11 @@ import {
   type ServerProviderModel,
   ThreadId,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  type SidebarProjectSortOrder,
+  type SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -36,6 +40,7 @@ import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { useWebNotifications } from "../../hooks/useWebNotifications";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -64,6 +69,7 @@ import {
   useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
+import { promptForPwaInstall } from "../../pwa";
 
 const THEME_OPTIONS = [
   {
@@ -85,6 +91,17 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const SIDEBAR_PROJECT_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
+  updated_at: "Last user message",
+  created_at: "Created at",
+  manual: "Manual",
+};
+
+const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
+  updated_at: "Last user message",
+  created_at: "Created at",
+};
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -442,6 +459,104 @@ function AboutVersionSection() {
   );
 }
 
+function WebNotificationsRows() {
+  const { installState, permission, query, supportsBrowserPush, isSaving, enable, disable } =
+    useWebNotifications();
+
+  if (isElectron) {
+    return null;
+  }
+
+  const notificationsState = query.data ?? null;
+  const installDescription = installState.isStandalone
+    ? "This browser already has the app installed."
+    : "Install T3 Code for a more native home-screen and desktop experience.";
+  const installStatus = installState.showIosInstallHint
+    ? "On iPhone or iPad, use Share → Add to Home Screen."
+    : installState.canPrompt
+      ? "This browser is ready to install the app."
+      : "Install becomes available once the browser considers this app eligible.";
+
+  const notificationsDescription =
+    "Send a browser notification when an assistant reply finishes, even if the app is in the background.";
+  const notificationsStatus =
+    permission === "unsupported"
+      ? "This browser does not support web push for this app."
+      : permission === "denied"
+        ? "Notifications are blocked in the browser for this site."
+        : notificationsState?.reason ??
+          (notificationsState?.subscribed
+            ? "Notifications are enabled on this device."
+            : "Notifications are currently off on this device.");
+
+  return (
+    <>
+      <SettingsRow
+        title="Install app"
+        description={installDescription}
+        status={installStatus}
+        control={
+          installState.isStandalone ? (
+            <Button size="xs" variant="outline" disabled>
+              Installed
+            </Button>
+          ) : installState.canPrompt ? (
+            <Button
+              size="xs"
+              onClick={() => {
+                void promptForPwaInstall();
+              }}
+            >
+              Install
+            </Button>
+          ) : installState.showIosInstallHint ? (
+            <Button size="xs" variant="outline" disabled>
+              Use Safari
+            </Button>
+          ) : null
+        }
+      />
+
+      <SettingsRow
+        title="Notifications"
+        description={notificationsDescription}
+        status={notificationsStatus}
+        control={
+          <Button
+            size="xs"
+            variant={notificationsState?.subscribed ? "outline" : "default"}
+            disabled={
+              isSaving ||
+              query.isLoading ||
+              !supportsBrowserPush ||
+              notificationsState?.supported === false ||
+              permission === "denied"
+            }
+            onClick={() => {
+              if (notificationsState?.subscribed) {
+                void disable();
+                return;
+              }
+              void enable();
+            }}
+          >
+            {isSaving ? (
+              <>
+                <LoaderIcon className="size-3.5 animate-spin" />
+                Working…
+              </>
+            ) : notificationsState?.subscribed ? (
+              "Disable"
+            ) : (
+              "Enable"
+            )}
+          </Button>
+        }
+      />
+    </>
+  );
+}
+
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -472,6 +587,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
+      ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
+        ? ["Project sorting"]
+        : []),
+      ...(settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder
+        ? ["Thread sorting"]
+        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -487,6 +608,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.defaultThreadEnvMode,
+      settings.sidebarProjectSortOrder,
+      settings.sidebarThreadSortOrder,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
@@ -905,6 +1028,8 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <WebNotificationsRows />
+
         <SettingsRow
           title="New threads"
           description="Pick the default workspace mode for newly created draft threads."
@@ -941,6 +1066,90 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="worktree">
                   New worktree
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Project sorting"
+          description="Controls how projects are ordered in the sidebar. Workspace order follows the projects inside them."
+          resetAction={
+            settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
+              <SettingResetButton
+                label="project sorting"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarProjectSortOrder}
+              onValueChange={(value) => {
+                if (value === "updated_at" || value === "created_at" || value === "manual") {
+                  updateSettings({ sidebarProjectSortOrder: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Project sorting">
+                <SelectValue>
+                  {SIDEBAR_PROJECT_SORT_LABELS[settings.sidebarProjectSortOrder]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {(Object.entries(SIDEBAR_PROJECT_SORT_LABELS) as Array<
+                  [SidebarProjectSortOrder, string]
+                >).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Thread sorting"
+          description="Controls the default order of threads inside each project."
+          resetAction={
+            settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder ? (
+              <SettingResetButton
+                label="thread sorting"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarThreadSortOrder}
+              onValueChange={(value) => {
+                if (value === "updated_at" || value === "created_at") {
+                  updateSettings({ sidebarThreadSortOrder: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Thread sorting">
+                <SelectValue>
+                  {SIDEBAR_THREAD_SORT_LABELS[settings.sidebarThreadSortOrder]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {(Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<
+                  [SidebarThreadSortOrder, string]
+                >).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }

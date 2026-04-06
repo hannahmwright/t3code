@@ -6,15 +6,21 @@ import {
   markThreadUnread,
   reorderProjects,
   setProjectExpanded,
+  setShowArchivedThreads,
   syncProjects,
   syncThreads,
+  toggleProjectGroupCollapsed,
+  toggleProjectPinned,
   type UiState,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
+    collapsedProjectGroups: [],
     projectExpandedById: {},
+    pinnedProjectIds: [],
     projectOrder: [],
+    showArchivedThreads: false,
     threadLastVisitedAtById: {},
     ...overrides,
   };
@@ -110,6 +116,28 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[recreatedProject2]).toBe(false);
   });
 
+  it("syncProjects keeps pinned projects aligned when ids change but cwd stays stable", () => {
+    const oldPinnedProjectId = ProjectId.makeUnsafe("project-pinned-old");
+    const recreatedPinnedProjectId = ProjectId.makeUnsafe("project-pinned-new");
+    const otherProjectId = ProjectId.makeUnsafe("project-2");
+    const initialState = syncProjects(
+      makeUiState({
+        pinnedProjectIds: [oldPinnedProjectId],
+      }),
+      [
+        { id: oldPinnedProjectId, cwd: "/tmp/project-1" },
+        { id: otherProjectId, cwd: "/tmp/project-2" },
+      ],
+    );
+
+    const next = syncProjects(initialState, [
+      { id: recreatedPinnedProjectId, cwd: "/tmp/project-1" },
+      { id: otherProjectId, cwd: "/tmp/project-2" },
+    ]);
+
+    expect(next.pinnedProjectIds).toEqual([recreatedPinnedProjectId]);
+  });
+
   it("syncProjects returns a new state when only project cwd changes", () => {
     const project1 = ProjectId.makeUnsafe("project-1");
     const initialState = syncProjects(
@@ -188,5 +216,28 @@ describe("uiStateStore pure functions", () => {
     const next = clearThreadUi(initialState, thread1);
 
     expect(next.threadLastVisitedAtById).toEqual({});
+  });
+
+  it("toggleProjectPinned adds and removes projects from the pinned section", () => {
+    const projectId = ProjectId.makeUnsafe("project-1");
+
+    const pinned = toggleProjectPinned(makeUiState(), projectId);
+    expect(pinned.pinnedProjectIds).toEqual([projectId]);
+
+    const unpinned = toggleProjectPinned(pinned, projectId);
+    expect(unpinned.pinnedProjectIds).toEqual([]);
+  });
+
+  it("toggleProjectGroupCollapsed tracks collapsed folder names", () => {
+    const next = toggleProjectGroupCollapsed(makeUiState(), "Client Work");
+    expect(next.collapsedProjectGroups).toEqual(["Client Work"]);
+
+    const reopened = toggleProjectGroupCollapsed(next, "Client Work");
+    expect(reopened.collapsedProjectGroups).toEqual([]);
+  });
+
+  it("setShowArchivedThreads updates archived visibility preference", () => {
+    const next = setShowArchivedThreads(makeUiState(), true);
+    expect(next.showArchivedThreads).toBe(true);
   });
 });

@@ -6,6 +6,10 @@ import {
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
+  matchesSidebarThreadSearch,
+  groupProjectsForSidebar,
+  normalizeSidebarThreadSearchQuery,
+  resolveSidebarThreadSearchMatch,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
@@ -621,11 +625,88 @@ describe("getVisibleThreadsForProject", () => {
   });
 });
 
+describe("sidebar thread search", () => {
+  it("normalizes search queries for case-insensitive matching", () => {
+    expect(normalizeSidebarThreadSearchQuery("  Fix BUGS  ")).toBe("fix bugs");
+  });
+
+  it("matches thread titles case-insensitively", () => {
+    expect(
+      matchesSidebarThreadSearch(
+        makeThread({
+          title: "Fix Login Redirect Loop",
+        }),
+        normalizeSidebarThreadSearchQuery("redirect"),
+      ),
+    ).toBe(true);
+
+    expect(
+      matchesSidebarThreadSearch(
+        makeThread({
+          title: "Fix Login Redirect Loop",
+        }),
+        normalizeSidebarThreadSearchQuery("billing"),
+      ),
+    ).toBe(false);
+  });
+
+  it("matches conversation text when the title does not match", () => {
+    expect(
+      matchesSidebarThreadSearch(
+        makeThread({
+          title: "Bug triage",
+          messages: [
+            {
+              id: "message-1" as never,
+              role: "user",
+              text: "Need help with the billing retry flow",
+              createdAt: "2026-03-09T10:01:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:01:00.000Z",
+            },
+          ],
+        }),
+        normalizeSidebarThreadSearchQuery("retry flow"),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns title and message match metadata for highlighted results", () => {
+    expect(
+      resolveSidebarThreadSearchMatch(
+        makeThread({
+          title: "Fix Login Redirect Loop",
+          messages: [
+            {
+              id: "message-1" as never,
+              role: "user",
+              text: "Double-check the redirect loop after auth refresh",
+              createdAt: "2026-03-09T10:01:00.000Z",
+              streaming: false,
+              completedAt: "2026-03-09T10:01:00.000Z",
+            },
+          ],
+        }),
+        normalizeSidebarThreadSearchQuery("redirect"),
+      ),
+    ).toEqual({
+      matchedInMessages: true,
+      titleMatch: {
+        start: 10,
+        end: 18,
+      },
+    });
+  });
+});
+
 function makeProject(overrides: Partial<Project> = {}): Project {
   const { defaultModelSelection, ...rest } = overrides;
   return {
     id: ProjectId.makeUnsafe("project-1"),
     name: "Project",
+    emoji: null,
+    groupName: null,
+    groupEmoji: null,
     cwd: "/tmp/project",
     defaultModelSelection: {
       provider: "codex",
@@ -1020,5 +1101,58 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+  });
+});
+
+describe("groupProjectsForSidebar", () => {
+  it("keeps ungrouped projects separate and preserves first-seen group order", () => {
+    const sections = groupProjectsForSidebar([
+      { project: makeProject({ id: ProjectId.makeUnsafe("project-1"), name: "Ungrouped" }) },
+      {
+        project: makeProject({
+          id: ProjectId.makeUnsafe("project-2"),
+          name: "Inbox",
+          groupName: "Client Work",
+        }),
+      },
+      {
+        project: makeProject({
+          id: ProjectId.makeUnsafe("project-3"),
+          name: "Website",
+          groupName: "Client Work",
+        }),
+      },
+      {
+        project: makeProject({
+          id: ProjectId.makeUnsafe("project-4"),
+          name: "Ops",
+          groupName: "Internal",
+        }),
+      },
+    ]);
+
+    expect(
+      sections.map((section) => ({
+        groupName: section.groupName,
+        groupEmoji: section.groupEmoji,
+        projectIds: section.projects.map((entry) => entry.project.id),
+      })),
+    ).toEqual([
+      {
+        groupName: null,
+        groupEmoji: null,
+        projectIds: [ProjectId.makeUnsafe("project-1")],
+      },
+      {
+        groupName: "Client Work",
+        groupEmoji: null,
+        projectIds: [ProjectId.makeUnsafe("project-2"), ProjectId.makeUnsafe("project-3")],
+      },
+      {
+        groupName: "Internal",
+        groupEmoji: null,
+        projectIds: [ProjectId.makeUnsafe("project-4")],
+      },
+    ]);
   });
 });

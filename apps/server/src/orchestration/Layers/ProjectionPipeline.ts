@@ -381,6 +381,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionProjectRepository.upsert({
             projectId: event.payload.projectId,
             title: event.payload.title,
+            emoji: event.payload.emoji,
+            groupName: event.payload.groupName,
+            groupEmoji: event.payload.groupEmoji ?? null,
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
@@ -400,6 +403,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionProjectRepository.upsert({
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.emoji !== undefined ? { emoji: event.payload.emoji } : {}),
+            ...(event.payload.groupName !== undefined
+              ? { groupName: event.payload.groupName }
+              : {}),
+            ...(event.payload.groupEmoji !== undefined
+              ? { groupEmoji: event.payload.groupEmoji }
+              : {}),
             ...(event.payload.workspaceRoot !== undefined
               ? { workspaceRoot: event.payload.workspaceRoot }
               : {}),

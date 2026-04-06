@@ -26,6 +26,21 @@ const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 
+function injectRuntimeHtmlConfig(html: string, authToken: string | undefined): string {
+  if (!authToken) {
+    return html;
+  }
+
+  const runtimeScript = `<script>window.__T3_WS_TOKEN=${JSON.stringify(authToken)};</script>`;
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${runtimeScript}</head>`);
+  }
+  if (html.includes("</body>")) {
+    return html.replace("</body>", `${runtimeScript}</body>`);
+  }
+  return `${runtimeScript}${html}`;
+}
+
 class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
   readonly cause: unknown;
   readonly bodyJson: OtlpTracer.TraceData;
@@ -248,7 +263,8 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       if (!indexData) {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
-      return HttpServerResponse.uint8Array(indexData, {
+      const indexHtml = new TextDecoder().decode(indexData);
+      return HttpServerResponse.text(injectRuntimeHtmlConfig(indexHtml, config.authToken), {
         status: 200,
         contentType: "text/html; charset=utf-8",
       });
@@ -260,6 +276,14 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       .pipe(Effect.catch(() => Effect.succeed(null)));
     if (!data) {
       return HttpServerResponse.text("Internal Server Error", { status: 500 });
+    }
+
+    if (contentType.startsWith("text/html")) {
+      const html = new TextDecoder().decode(data);
+      return HttpServerResponse.text(injectRuntimeHtmlConfig(html, config.authToken), {
+        status: 200,
+        contentType,
+      });
     }
 
     return HttpServerResponse.uint8Array(data, {

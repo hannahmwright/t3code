@@ -81,6 +81,9 @@ export interface TurnDiffSummary {
 export interface Project {
   id: ProjectId;
   name: string;
+  emoji: string | null;
+  groupName: string | null;
+  groupEmoji: string | null;
   cwd: string;
   defaultModelSelection: ModelSelection | null;
   createdAt?: string | undefined;
