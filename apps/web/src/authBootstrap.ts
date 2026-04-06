@@ -123,6 +123,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 
   await exchangeBootstrapCredential(resolvePrimaryEnvironmentHttpBaseUrl(), trimmedCredential);
   stripPairingTokenFromUrl();
+  bootstrapPromise = null;
 }
 
 export function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
