@@ -10,7 +10,7 @@ import {
   useNavigate,
   useLocation,
 } from "@tanstack/react-router";
-import { Suspense, lazy, useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
@@ -21,6 +21,7 @@ import {
   WebSocketConnectionCoordinator,
   WebSocketConnectionSurface,
 } from "../components/WebSocketConnectionSurface";
+import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import { Input } from "../components/ui/input";
@@ -59,12 +60,6 @@ import {
   signInWithPassword,
   useAppAuthStatus,
 } from "../appAuth";
-
-const LazyAppSidebarLayout = lazy(() =>
-  import("../components/AppSidebarLayout").then((module) => ({
-    default: module.AppSidebarLayout,
-  })),
-);
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -140,19 +135,9 @@ function RootRouteView() {
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <WebSocketConnectionSurface>
-          <Suspense
-            fallback={
-              <AppBootScreen
-                title="Loading workspace"
-                description="Loading the app shell and preparing your projects."
-                statusLabel="Loading sidebar and route bundles"
-              />
-            }
-          >
-            <LazyAppSidebarLayout>
-              <Outlet />
-            </LazyAppSidebarLayout>
-          </Suspense>
+          <AppSidebarLayout>
+            <Outlet />
+          </AppSidebarLayout>
         </WebSocketConnectionSurface>
       </AnchoredToastProvider>
     </ToastProvider>

@@ -14,6 +14,7 @@ declare global {
   interface Window {
     nativeApi?: NativeApi;
     desktopBridge?: DesktopBridge;
+    __T3_APP_AUTH_ENABLED?: boolean;
     __T3_WS_TOKEN?: string;
   }
 }

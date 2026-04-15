@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 
-import { clearBootstrapCache } from "./bootstrapCache";
+import { clearBootstrapCache, readBootstrapCache } from "./bootstrapCache";
 import { isElectron } from "./env";
 
 export interface AppAuthStatus {
@@ -31,6 +31,15 @@ const DEFAULT_APP_AUTH_STATUS: AppAuthStatus = {
 };
 
 export const DESKTOP_APP_AUTH_RETRY_DELAY_MS = 1_000;
+const WARM_BOOT_APP_AUTH_STATUS: AppAuthStatus = {
+  ready: true,
+  reachable: true,
+  enabled: false,
+  authenticated: true,
+  username: null,
+  sessionTtlDays: null,
+  error: null,
+};
 const DESKTOP_LOCAL_AUTH_STATUS: AppAuthStatus = {
   ready: true,
   reachable: true,
@@ -55,7 +64,53 @@ export function shouldWaitForDesktopAuthService(
   return desktopApp && status.ready && !status.reachable;
 }
 
-let appAuthStatus = DEFAULT_APP_AUTH_STATUS;
+function readRuntimeAppAuthEnabledFlag(): boolean | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return typeof window.__T3_APP_AUTH_ENABLED === "boolean"
+    ? window.__T3_APP_AUTH_ENABLED
+    : undefined;
+}
+
+export function shouldWarmStartAppAuthStatus(input: {
+  readonly bypassAppAuth: boolean;
+  readonly hasBootstrapCache: boolean;
+  readonly runtimeAppAuthEnabled: boolean | undefined;
+}): boolean {
+  return !input.bypassAppAuth && input.runtimeAppAuthEnabled === false && input.hasBootstrapCache;
+}
+
+function getInitialAppAuthStatus(): {
+  readonly needsRefresh: boolean;
+  readonly status: AppAuthStatus;
+} {
+  const bypassAppAuth = shouldBypassAppAuthForDesktopShell();
+  const hasBootstrapCache = readBootstrapCache() !== null;
+  const runtimeAppAuthEnabled = readRuntimeAppAuthEnabledFlag();
+  if (
+    shouldWarmStartAppAuthStatus({
+      bypassAppAuth,
+      hasBootstrapCache,
+      runtimeAppAuthEnabled,
+    })
+  ) {
+    return {
+      status: WARM_BOOT_APP_AUTH_STATUS,
+      needsRefresh: true,
+    };
+  }
+
+  return {
+    status: DEFAULT_APP_AUTH_STATUS,
+    needsRefresh: false,
+  };
+}
+
+const initialAppAuthStatus = getInitialAppAuthStatus();
+let appAuthStatus = initialAppAuthStatus.status;
+let pendingWarmStartRefresh = initialAppAuthStatus.needsRefresh;
 const listeners = new Set<() => void>();
 
 function emit(next: AppAuthStatus) {
@@ -179,6 +234,12 @@ export function useAppAuthStatus(): AppAuthStatus {
 
   useEffect(() => {
     if (bypassAppAuth) {
+      return;
+    }
+
+    if (pendingWarmStartRefresh) {
+      pendingWarmStartRefresh = false;
+      void refreshAppAuthStatus();
       return;
     }
 

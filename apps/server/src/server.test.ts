@@ -501,7 +501,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("injects the websocket auth token into served html when auth is enabled", () =>
+  it.effect("injects runtime auth config into served html when app auth is disabled", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -520,6 +520,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const body = yield* response.text;
       assert.equal(response.status, 200);
       assert.include(body, "router-auth-ok");
+      assert.include(body, "window.__T3_APP_AUTH_ENABLED=false");
       assert.include(body, 'window.__T3_WS_TOKEN="secret-token"');
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

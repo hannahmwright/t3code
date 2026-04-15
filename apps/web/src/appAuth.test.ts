@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  shouldWarmStartAppAuthStatus,
   shouldBypassAppAuthForDesktopShell,
   shouldWaitForDesktopAuthService,
 } from "./appAuth";
@@ -65,6 +66,48 @@ describe("shouldWaitForDesktopAuthService", () => {
         },
         true,
       ),
+    ).toBe(false);
+  });
+});
+
+describe("shouldWarmStartAppAuthStatus", () => {
+  it("allows a warm start when app auth is disabled and bootstrap cache exists", () => {
+    expect(
+      shouldWarmStartAppAuthStatus({
+        bypassAppAuth: false,
+        hasBootstrapCache: true,
+        runtimeAppAuthEnabled: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not warm start when the server requires app auth", () => {
+    expect(
+      shouldWarmStartAppAuthStatus({
+        bypassAppAuth: false,
+        hasBootstrapCache: true,
+        runtimeAppAuthEnabled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not warm start without bootstrap cache", () => {
+    expect(
+      shouldWarmStartAppAuthStatus({
+        bypassAppAuth: false,
+        hasBootstrapCache: false,
+        runtimeAppAuthEnabled: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not warm start when the desktop shell already bypasses app auth", () => {
+    expect(
+      shouldWarmStartAppAuthStatus({
+        bypassAppAuth: true,
+        hasBootstrapCache: true,
+        runtimeAppAuthEnabled: false,
+      }),
     ).toBe(false);
   });
 });

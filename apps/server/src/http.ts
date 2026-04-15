@@ -35,12 +35,18 @@ const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 
-function injectRuntimeHtmlConfig(html: string, authToken: string | undefined): string {
-  if (!authToken) {
-    return html;
+function injectRuntimeHtmlConfig(input: {
+  readonly appAuthEnabled: boolean;
+  readonly authToken: string | undefined;
+  readonly html: string;
+}): string {
+  const assignments = [`window.__T3_APP_AUTH_ENABLED=${input.appAuthEnabled ? "true" : "false"};`];
+  if (input.authToken) {
+    assignments.push(`window.__T3_WS_TOKEN=${JSON.stringify(input.authToken)};`);
   }
 
-  const runtimeScript = `<script>window.__T3_WS_TOKEN=${JSON.stringify(authToken)};</script>`;
+  const runtimeScript = `<script>${assignments.join("")}</script>`;
+  const html = input.html;
   if (html.includes("</head>")) {
     return html.replace("</head>", `${runtimeScript}</head>`);
   }
@@ -417,10 +423,14 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       }
       const indexHtml = new TextDecoder().decode(indexData);
       return HttpServerResponse.text(
-        injectRuntimeHtmlConfig(indexHtml, config.appAuthEnabled ? undefined : config.authToken),
+        injectRuntimeHtmlConfig({
+          html: indexHtml,
+          appAuthEnabled: config.appAuthEnabled,
+          authToken: config.appAuthEnabled ? undefined : config.authToken,
+        }),
         {
-        status: 200,
-        contentType: "text/html; charset=utf-8",
+          status: 200,
+          contentType: "text/html; charset=utf-8",
         },
       );
     }
@@ -436,10 +446,14 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     if (contentType.startsWith("text/html")) {
       const html = new TextDecoder().decode(data);
       return HttpServerResponse.text(
-        injectRuntimeHtmlConfig(html, config.appAuthEnabled ? undefined : config.authToken),
+        injectRuntimeHtmlConfig({
+          html,
+          appAuthEnabled: config.appAuthEnabled,
+          authToken: config.appAuthEnabled ? undefined : config.authToken,
+        }),
         {
-        status: 200,
-        contentType,
+          status: 200,
+          contentType,
         },
       );
     }
