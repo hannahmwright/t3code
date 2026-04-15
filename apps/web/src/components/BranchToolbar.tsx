@@ -111,7 +111,7 @@ export default function BranchToolbar({
   if (!activeThreadId || !activeProject) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pt-1 pb-3 max-md:hidden">
+    <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-5 pt-1 pb-3 max-md:hidden">
       <div className="flex items-center gap-2.5">
         {envLocked || activeWorktreePath ? (
           <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
@@ -157,37 +157,41 @@ export default function BranchToolbar({
             </SelectPopup>
           </Select>
         )}
-        {activeProject.emoji ? (
-          <span
-            className="inline-flex h-7 items-center rounded-full border px-2.5 text-sm leading-none shadow-sm"
-            style={
-              projectThemeStyle
-                ? {
-                    ...projectThemeStyle,
-                    borderColor: "var(--project-accent-border)",
-                    backgroundColor: "var(--project-accent-background)",
-                  }
-                : undefined
-            }
-            title={activeProject.name}
-            aria-label={`${activeProject.name} emoji`}
-          >
-            {activeProject.emoji}
-          </span>
-        ) : null}
       </div>
 
-      <BranchToolbarBranchSelector
-        activeProjectCwd={activeProject.cwd}
-        activeThreadBranch={activeThreadBranch}
-        activeWorktreePath={activeWorktreePath}
-        branchCwd={branchCwd}
-        effectiveEnvMode={effectiveEnvMode}
-        envLocked={envLocked}
-        onSetThreadBranch={setThreadBranch}
-        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-        {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-      />
+      {activeProject.emoji ? (
+        <span
+          className="inline-flex h-7 items-center rounded-full border px-2.5 text-sm leading-none shadow-sm"
+          style={
+            projectThemeStyle
+              ? {
+                  ...projectThemeStyle,
+                  color: "var(--project-accent-text)",
+                  borderColor: "var(--project-accent-border)",
+                  backgroundColor: "var(--project-accent-background)",
+                }
+              : undefined
+          }
+          title={activeProject.name}
+          aria-label={`${activeProject.name} emoji`}
+        >
+          {activeProject.emoji}
+        </span>
+      ) : null}
+
+      <div className="ml-auto">
+        <BranchToolbarBranchSelector
+          activeProjectCwd={activeProject.cwd}
+          activeThreadBranch={activeThreadBranch}
+          activeWorktreePath={activeWorktreePath}
+          branchCwd={branchCwd}
+          effectiveEnvMode={effectiveEnvMode}
+          envLocked={envLocked}
+          onSetThreadBranch={setThreadBranch}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      </div>
     </div>
   );
 }
