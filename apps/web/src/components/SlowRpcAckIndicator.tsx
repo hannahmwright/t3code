@@ -1,9 +1,21 @@
 import { AlertTriangleIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import { getWsConnectionUiState, useWsConnectionStatus } from "../rpc/wsConnectionState";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+
+const DEBUG_SLOW_RPC_PARAM = "debugSlowRpc";
+const DEBUG_SLOW_RPC_SAMPLE: ReadonlyArray<Pick<SlowRpcAckRequest, "tag" | "thresholdMs">> = [
+  {
+    tag: "orchestration.dispatchCommand",
+    thresholdMs: 15_000,
+  },
+  {
+    tag: "server.getConfig",
+    thresholdMs: 15_000,
+  },
+];
 
 function formatElapsedSince(startedAtMs: number, nowMs: number): string {
   const elapsedSeconds = Math.max(1, Math.floor((nowMs - startedAtMs) / 1000));
@@ -16,10 +28,47 @@ function formatElapsedSince(startedAtMs: number, nowMs: number): string {
   return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
 }
 
+function resolveDebugSlowRequests(nowMs: number): ReadonlyArray<SlowRpcAckRequest> {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return [];
+  }
+
+  const query = new URLSearchParams(window.location.search).get(DEBUG_SLOW_RPC_PARAM)?.trim();
+  if (!query) {
+    return [];
+  }
+
+  const requestedTags =
+    query === "1" || query.toLowerCase() === "true"
+      ? DEBUG_SLOW_RPC_SAMPLE.map((request) => request.tag)
+      : query
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+
+  if (requestedTags.length === 0) {
+    return [];
+  }
+
+  return requestedTags.map((tag, index) => {
+    const sample = DEBUG_SLOW_RPC_SAMPLE[index] ?? DEBUG_SLOW_RPC_SAMPLE[0]!;
+    const elapsedMs = sample.thresholdMs + (index + 1) * 19_000;
+    return {
+      requestId: `debug-slow-rpc-${index + 1}`,
+      startedAt: new Date(nowMs - elapsedMs).toISOString(),
+      startedAtMs: nowMs - elapsedMs,
+      tag,
+      thresholdMs: sample.thresholdMs,
+    };
+  });
+}
+
 export function SlowRpcAckIndicator() {
-  const slowRequests = useSlowRpcAckRequests();
+  const liveSlowRequests = useSlowRpcAckRequests();
   const status = useWsConnectionStatus();
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const debugSlowRequests = useMemo(() => resolveDebugSlowRequests(nowMs), [nowMs]);
+  const slowRequests = debugSlowRequests.length > 0 ? debugSlowRequests : liveSlowRequests;
 
   useEffect(() => {
     if (slowRequests.length === 0) {
