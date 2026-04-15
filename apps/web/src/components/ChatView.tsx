@@ -158,6 +158,7 @@ import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./Compose
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { SlowRpcAckIndicator } from "./SlowRpcAckIndicator";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
@@ -3961,6 +3962,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   Threads
                 </span>
               </div>
+              <SlowRpcAckIndicator />
               <Button
                 size="icon-sm"
                 variant="outline"
@@ -3986,8 +3988,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </header>
         )}
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
-            <span className="text-xs text-muted-foreground/50">No active thread</span>
+          <div className="drag-region flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-5">
+            <span className="mr-auto text-xs text-muted-foreground/50">No active thread</span>
+            <SlowRpcAckIndicator />
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">

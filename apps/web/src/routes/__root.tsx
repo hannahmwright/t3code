@@ -18,7 +18,6 @@ import { APP_DISPLAY_NAME } from "../branding";
 import { persistReadModelToBootstrapCache } from "../bootstrapCache";
 import { isElectron } from "../env";
 import {
-  SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
   WebSocketConnectionSurface,
 } from "../components/WebSocketConnectionSurface";
@@ -140,7 +139,6 @@ function RootRouteView() {
         <NotificationsPresenceCoordinator />
         <EventRouter />
         <WebSocketConnectionCoordinator />
-        <SlowRpcAckToastCoordinator />
         <WebSocketConnectionSurface>
           <Suspense
             fallback={

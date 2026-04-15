@@ -15,6 +15,7 @@ import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { Button } from "../ui/button";
 import { useIsMobile } from "../../hooks/useMediaQuery";
+import { SlowRpcAckIndicator } from "../SlowRpcAckIndicator";
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
@@ -93,6 +94,7 @@ export const ChatHeader = memo(function ChatHeader({
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <SlowRpcAckIndicator />
             <Button
               size="icon-sm"
               variant="outline"
@@ -164,6 +166,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+        <SlowRpcAckIndicator />
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
