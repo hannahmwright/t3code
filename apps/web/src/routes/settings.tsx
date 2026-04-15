@@ -1,92 +1,54 @@
 import { RotateCcwIcon } from "lucide-react";
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useState } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 
+import { SettingsPageLayout } from "../components/settings/SettingsPageLayout";
 import { useSettingsRestore } from "../components/settings/useSettingsRestore";
 import { Button } from "../components/ui/button";
-import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
-import { isElectron } from "../env";
+const LazyGeneralSettingsPanel = lazy(() =>
+  import("../components/settings/SettingsPanels").then((module) => ({
+    default: module.GeneralSettingsPanel,
+  })),
+);
 
-function SettingsContentLayout() {
+function SettingsPanelFallback() {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center bg-background px-6 py-10 text-sm text-muted-foreground">
+      Loading settings...
+    </div>
+  );
+}
+
+function SettingsRouteView() {
   const [restoreSignal, setRestoreSignal] = useState(0);
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(() =>
     setRestoreSignal((value) => value + 1),
   );
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        window.history.back();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
-
   return (
-    <SidebarInset className="min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate max-md:min-h-[var(--app-shell-height)] md:h-dvh">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        {!isElectron && (
-          <header className="border-b border-border px-3 py-2 sm:px-5 max-md:sticky max-md:top-0 max-md:z-30 max-md:bg-background/92 max-md:px-3 max-md:pt-[calc(env(safe-area-inset-top)+0.5rem)] max-md:pb-3 max-md:backdrop-blur-xl">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-11 shrink-0 rounded-full border border-border/70 bg-background/85 shadow-sm md:hidden" />
-              <span className="text-sm font-medium text-foreground">Settings</span>
-              <div className="ms-auto flex items-center gap-2">
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={changedSettingLabels.length === 0}
-                  onClick={() => void restoreDefaults()}
-                >
-                  <RotateCcwIcon className="size-3.5" />
-                  Restore defaults
-                </Button>
-              </div>
-            </div>
-          </header>
-        )}
-
-        {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
-            <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
-              Settings
-            </span>
-            <div className="ms-auto flex items-center gap-2">
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={changedSettingLabels.length === 0}
-                onClick={() => void restoreDefaults()}
-              >
-                <RotateCcwIcon className="size-3.5" />
-                Restore defaults
-              </Button>
-            </div>
-          </div>
-        )}
-
-        <div key={restoreSignal} className="min-h-0 flex flex-1 flex-col">
-          <Outlet />
-        </div>
+    <SettingsPageLayout
+      title="Settings"
+      toolbar={
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={changedSettingLabels.length === 0}
+          onClick={() => void restoreDefaults()}
+        >
+          <RotateCcwIcon className="size-3.5" />
+          Restore defaults
+        </Button>
+      }
+    >
+      <div key={restoreSignal} className="min-h-0 flex flex-1 flex-col">
+        <Suspense fallback={<SettingsPanelFallback />}>
+          <LazyGeneralSettingsPanel />
+        </Suspense>
       </div>
-    </SidebarInset>
+    </SettingsPageLayout>
   );
 }
 
-function SettingsRouteLayout() {
-  return <SettingsContentLayout />;
-}
-
 export const Route = createFileRoute("/settings")({
-  beforeLoad: ({ location }) => {
-    if (location.pathname === "/settings") {
-      throw redirect({ to: "/settings/general", replace: true });
-    }
-  },
-  component: SettingsRouteLayout,
+  component: SettingsRouteView,
 });

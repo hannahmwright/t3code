@@ -29,6 +29,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   terminalAvailable: boolean;
   terminalOpen: boolean;
+  runningTerminalCount: number;
   terminalToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
@@ -55,6 +56,7 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   terminalAvailable,
   terminalOpen,
+  runningTerminalCount,
   terminalToggleShortcutLabel,
   diffToggleShortcutLabel,
   gitCwd,
@@ -69,6 +71,19 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenSettings,
 }: ChatHeaderProps) {
   const isMobile = useIsMobile();
+  const runningTerminalLabel =
+    runningTerminalCount === 1
+      ? "1 running terminal"
+      : `${runningTerminalCount} running terminals`;
+  const terminalTooltipLabel = !terminalAvailable
+    ? "Terminal is unavailable until this thread has an active project."
+    : terminalToggleShortcutLabel
+      ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
+      : "Toggle terminal drawer";
+  const terminalAriaLabel =
+    runningTerminalCount > 0
+      ? `Toggle terminal drawer, ${runningTerminalLabel}`
+      : "Toggle terminal drawer";
 
   if (isMobile) {
     return (
@@ -193,21 +208,26 @@ export const ChatHeader = memo(function ChatHeader({
                 className="shrink-0"
                 pressed={terminalOpen}
                 onPressedChange={onToggleTerminal}
-                aria-label="Toggle terminal drawer"
+                aria-label={terminalAriaLabel}
                 variant="outline"
                 size="xs"
                 disabled={!terminalAvailable}
               >
-                <TerminalSquareIcon className="size-3" />
+                <span className="relative inline-flex items-center justify-center">
+                  <TerminalSquareIcon className="size-3" />
+                  {runningTerminalCount > 0 ? (
+                    <span className="absolute -top-1.5 -right-1.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full border border-background bg-emerald-500 px-0.5 text-[8px] leading-none font-semibold text-white shadow-sm">
+                      {runningTerminalCount > 9 ? "9+" : runningTerminalCount}
+                    </span>
+                  ) : null}
+                </span>
               </Toggle>
             }
           />
           <TooltipPopup side="bottom">
-            {!terminalAvailable
-              ? "Terminal is unavailable until this thread has an active project."
-              : terminalToggleShortcutLabel
-                ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                : "Toggle terminal drawer"}
+            {runningTerminalCount > 0
+              ? `${terminalTooltipLabel} • ${runningTerminalLabel}`
+              : terminalTooltipLabel}
           </TooltipPopup>
         </Tooltip>
         <Tooltip>

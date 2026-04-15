@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  appendThreadErrorWorkEntry,
   deriveCompletionDividerBeforeEntryId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
@@ -919,6 +920,53 @@ describe("deriveWorkLogEntries", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]?.id).toBe("a-complete-same-timestamp");
+  });
+});
+
+describe("appendThreadErrorWorkEntry", () => {
+  it("appends a thread error as an inline error work entry", () => {
+    const entries = appendThreadErrorWorkEntry([], {
+      error: "Command failed with exit code 1.",
+      latestTurn: {
+        turnId: TurnId.makeUnsafe("turn-1"),
+        startedAt: "2026-02-23T00:00:01.000Z",
+        completedAt: "2026-02-23T00:00:04.000Z",
+      },
+    });
+
+    expect(entries).toEqual([
+      expect.objectContaining({
+        createdAt: "2026-02-23T00:00:04.000Z",
+        detail: "Command failed with exit code 1.",
+        label: "Error",
+        tone: "error",
+      }),
+    ]);
+  });
+
+  it("does not duplicate an existing matching error work entry", () => {
+    const entries = appendThreadErrorWorkEntry(
+      [
+        {
+          id: "runtime-error",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Runtime error",
+          detail: "Command failed with exit code 1.",
+          tone: "error",
+        },
+      ],
+      {
+        error: "Command failed with exit code 1.",
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          startedAt: "2026-02-23T00:00:01.000Z",
+          completedAt: "2026-02-23T00:00:04.000Z",
+        },
+      },
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("runtime-error");
   });
 });
 

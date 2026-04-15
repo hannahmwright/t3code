@@ -1,6 +1,5 @@
 import {
   ArchiveIcon,
-  ArchiveXIcon,
   ChevronRightIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -80,7 +79,6 @@ import { buildProjectThemeStyle, normalizeProjectAccentColor } from "../projectT
 import { useThreadActions } from "../hooks/useThreadActions";
 import { toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
-import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
@@ -136,7 +134,15 @@ import {
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings } from "~/hooks/useSettings";
-import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "./ui/dialog";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "./ui/field";
 import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
@@ -551,7 +557,9 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
               title={terminalStatus.label}
               className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
             >
-              <TerminalIcon className={`size-4 md:size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+              <TerminalIcon
+                className={`size-4 md:size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+              />
             </span>
           )}
           <div className="flex min-w-12 justify-end">
@@ -773,7 +781,9 @@ function ProjectGroupHeader({
         ) : (
           <FolderIcon className="size-6 shrink-0 md:size-3.5" />
         )}
-        <div className="min-w-0 flex-1 truncate text-[17px] font-medium md:text-sm">{groupName}</div>
+        <div className="min-w-0 flex-1 truncate text-[17px] font-medium md:text-sm">
+          {groupName}
+        </div>
         <span
           className={`ml-auto flex items-center gap-1 transition-opacity duration-150 ${
             onAddProject
@@ -824,7 +834,6 @@ export default function Sidebar() {
     pinnedProjectIds,
     projectExpandedById,
     projectOrder,
-    showArchivedThreads,
     threadLastVisitedAtById,
     workspaceDefinitions,
   } = useUiStateStore(
@@ -835,7 +844,6 @@ export default function Sidebar() {
       pinnedProjectIds: store.pinnedProjectIds,
       projectExpandedById: store.projectExpandedById,
       projectOrder: store.projectOrder,
-      showArchivedThreads: store.showArchivedThreads,
       threadLastVisitedAtById: store.threadLastVisitedAtById,
       workspaceDefinitions: store.workspaceDefinitions,
     })),
@@ -847,7 +855,6 @@ export default function Sidebar() {
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const seedCollapsedProjectGroups = useUiStateStore((store) => store.seedCollapsedProjectGroups);
   const seedProjectExpansion = useUiStateStore((store) => store.seedProjectExpansion);
-  const setShowArchivedThreads = useUiStateStore((store) => store.setShowArchivedThreads);
   const addWorkspaceDefinition = useUiStateStore((store) => store.addWorkspaceDefinition);
   const updateWorkspaceDefinition = useUiStateStore((store) => store.updateWorkspaceDefinition);
   const removeWorkspaceDefinition = useUiStateStore((store) => store.removeWorkspaceDefinition);
@@ -861,7 +868,6 @@ export default function Sidebar() {
   );
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
-  const isOnSettings = pathname.startsWith("/settings");
   const appSettings = useSettings();
   const { activeDraftThread, activeThread, handleNewThread } = useHandleNewThread();
   const { archiveThread, deleteThread, unarchiveThread } = useThreadActions();
@@ -880,7 +886,9 @@ export default function Sidebar() {
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [editingProject, setEditingProject] = useState<ProjectEditDraft | null>(null);
-  const [editingProjectGroup, setEditingProjectGroup] = useState<ProjectGroupEditDraft | null>(null);
+  const [editingProjectGroup, setEditingProjectGroup] = useState<ProjectGroupEditDraft | null>(
+    null,
+  );
   const [isSavingProjectEdit, setIsSavingProjectEdit] = useState(false);
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const threadSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -924,6 +932,8 @@ export default function Sidebar() {
     () => threads.filter((thread) => thread.archivedAt !== null).length,
     [threads],
   );
+  const isSettingsRoute = pathname === "/settings" || pathname.startsWith("/settings/");
+  const isArchivedRoute = pathname === "/archived" || pathname === "/settings/archived";
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
       items: projects,
@@ -990,7 +1000,10 @@ export default function Sidebar() {
     return [...options.values()].sort((left, right) => left.name.localeCompare(right.name));
   }, [projects, workspaceDefinitions]);
   const routeThreadProjectId = useMemo(
-    () => (routeThreadId ? threads.find((thread) => thread.id === routeThreadId)?.projectId ?? null : null),
+    () =>
+      routeThreadId
+        ? (threads.find((thread) => thread.id === routeThreadId)?.projectId ?? null)
+        : null,
     [routeThreadId, threads],
   );
   const autoExpandedProjectIds = useMemo(() => {
@@ -1025,7 +1038,13 @@ export default function Sidebar() {
         ? [project.id]
         : [],
     );
-  }, [activeDraftThread?.projectId, activeThread?.projectId, routeThreadProjectId, sidebarProjects, threads]);
+  }, [
+    activeDraftThread?.projectId,
+    activeThread?.projectId,
+    routeThreadProjectId,
+    sidebarProjects,
+    threads,
+  ]);
   const autoExpandedProjectIdSet = useMemo(
     () => new Set(autoExpandedProjectIds),
     [autoExpandedProjectIds],
@@ -1169,7 +1188,9 @@ export default function Sidebar() {
           projectId,
           title,
           ...(groupName.length > 0 ? { groupName } : {}),
-          ...(groupName.length > 0 ? { groupEmoji: groupEmoji.length > 0 ? groupEmoji : null } : {}),
+          ...(groupName.length > 0
+            ? { groupEmoji: groupEmoji.length > 0 ? groupEmoji : null }
+            : {}),
           workspaceRoot: cwd,
           defaultModelSelection: {
             provider: "codex",
@@ -1805,7 +1826,10 @@ export default function Sidebar() {
         [
           { id: "edit", label: "Edit project" },
           { id: "assign-color", label: project.color ? "Edit color..." : "Assign color..." },
-          { id: "pin", label: pinnedProjectIdSet.has(project.id) ? "Unpin project" : "Pin project" },
+          {
+            id: "pin",
+            label: pinnedProjectIdSet.has(project.id) ? "Unpin project" : "Pin project",
+          },
           { id: "copy-path", label: "Copy Project Path" },
           { id: "delete", label: "Remove project", destructive: true },
         ],
@@ -2049,8 +2073,8 @@ export default function Sidebar() {
   );
 
   const sidebarVisibleThreads = useMemo(
-    () => threads.filter((thread) => showArchivedThreads || thread.archivedAt === null),
-    [showArchivedThreads, threads],
+    () => threads.filter((thread) => thread.archivedAt === null),
+    [threads],
   );
   const searchVisibleThreads = useMemo(
     () =>
@@ -2088,79 +2112,86 @@ export default function Sidebar() {
   const canDragProjects = isManualProjectSorting || workspaceOptions.length > 0;
   const renderedProjects = useMemo(
     () =>
-      sortedProjects.map((project) => {
-        const resolveProjectThreadStatus = (
-          thread: NonNullable<(typeof sidebarThreadsById)[string]>,
-        ) =>
-          resolveThreadStatusPill({
-            thread: {
-              ...thread,
-              lastVisitedAt: threadLastVisitedAtById[thread.id],
-            },
-          });
-        const allProjectThreads = sortThreadsForSidebar(
-          (threadIdsByProjectId[project.id] ?? [])
-            .map((threadId) => sidebarThreadsById[threadId])
-            .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
-            .filter((thread) => showArchivedThreads || thread.archivedAt === null),
-          appSettings.sidebarThreadSortOrder,
-        );
-        const projectThreads = hasThreadSearch
-          ? allProjectThreads.filter((thread) => matchedThreadIds.has(thread.id))
-          : allProjectThreads;
-        const activeVisibleProjectThreads = projectThreads.filter((thread) => thread.archivedAt === null);
-        const projectStatus = resolveProjectStatusIndicator(
-          activeVisibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
-        );
-        const activeThreadId = routeThreadId ?? undefined;
-        const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
-        const pinnedCollapsedThread =
-          !hasThreadSearch && !project.expanded && activeThreadId
-            ? (allProjectThreads.find((thread) => thread.id === activeThreadId) ?? null)
-            : null;
-        const shouldShowThreadPanel = hasThreadSearch
-          ? projectThreads.length > 0
-          : project.expanded || pinnedCollapsedThread !== null;
-        const {
-          hasHiddenThreads,
-          hiddenThreads,
-          visibleThreads: visibleProjectThreads,
-        } = hasThreadSearch
-          ? {
-              hasHiddenThreads: false,
-              hiddenThreads: [],
-              visibleThreads: projectThreads,
-            }
-          : getVisibleThreadsForProject({
-              threads: projectThreads,
-              activeThreadId,
-              isThreadListExpanded,
-              previewLimit: THREAD_PREVIEW_LIMIT,
+      sortedProjects
+        .map((project) => {
+          const resolveProjectThreadStatus = (
+            thread: NonNullable<(typeof sidebarThreadsById)[string]>,
+          ) =>
+            resolveThreadStatusPill({
+              thread: {
+                ...thread,
+                lastVisitedAt: threadLastVisitedAtById[thread.id],
+              },
             });
-        const hiddenThreadStatus = resolveProjectStatusIndicator(
-          hiddenThreads
-            .filter((thread) => thread.archivedAt === null)
-            .map((thread) => resolveProjectThreadStatus(thread)),
-        );
-        const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
-        const renderedThreadIds = pinnedCollapsedThread
-          ? [pinnedCollapsedThread.id]
-          : visibleProjectThreads.map((thread) => thread.id);
-        const showEmptyThreadState = !hasThreadSearch && project.expanded && projectThreads.length === 0;
+          const allProjectThreads = sortThreadsForSidebar(
+            (threadIdsByProjectId[project.id] ?? [])
+              .map((threadId) => sidebarThreadsById[threadId])
+              .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
+              .filter((thread) => thread.archivedAt === null),
+            appSettings.sidebarThreadSortOrder,
+          );
+          const projectThreads = hasThreadSearch
+            ? allProjectThreads.filter((thread) => matchedThreadIds.has(thread.id))
+            : allProjectThreads;
+          const activeVisibleProjectThreads = projectThreads.filter(
+            (thread) => thread.archivedAt === null,
+          );
+          const projectStatus = resolveProjectStatusIndicator(
+            activeVisibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
+          );
+          const activeThreadId = routeThreadId ?? undefined;
+          const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
+          const pinnedCollapsedThread =
+            !hasThreadSearch && !project.expanded && activeThreadId
+              ? (allProjectThreads.find((thread) => thread.id === activeThreadId) ?? null)
+              : null;
+          const shouldShowThreadPanel = hasThreadSearch
+            ? projectThreads.length > 0
+            : project.expanded || pinnedCollapsedThread !== null;
+          const {
+            hasHiddenThreads,
+            hiddenThreads,
+            visibleThreads: visibleProjectThreads,
+          } = hasThreadSearch
+            ? {
+                hasHiddenThreads: false,
+                hiddenThreads: [],
+                visibleThreads: projectThreads,
+              }
+            : getVisibleThreadsForProject({
+                threads: projectThreads,
+                activeThreadId,
+                isThreadListExpanded,
+                previewLimit: THREAD_PREVIEW_LIMIT,
+              });
+          const hiddenThreadStatus = resolveProjectStatusIndicator(
+            hiddenThreads
+              .filter((thread) => thread.archivedAt === null)
+              .map((thread) => resolveProjectThreadStatus(thread)),
+          );
+          const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
+          const renderedThreadIds = pinnedCollapsedThread
+            ? [pinnedCollapsedThread.id]
+            : visibleProjectThreads.map((thread) => thread.id);
+          const showEmptyThreadState =
+            !hasThreadSearch && project.expanded && projectThreads.length === 0;
 
-        return {
-          hasHiddenThreads,
-          hiddenThreadStatus,
-          threadCount: projectThreads.length,
-          orderedProjectThreadIds,
-          project,
-          projectStatus,
-          renderedThreadIds,
-          showEmptyThreadState,
-          shouldShowThreadPanel,
-          isThreadListExpanded,
-        };
-      }).filter((renderedProject) => !hasThreadSearch || renderedProject.renderedThreadIds.length > 0),
+          return {
+            hasHiddenThreads,
+            hiddenThreadStatus,
+            threadCount: projectThreads.length,
+            orderedProjectThreadIds,
+            project,
+            projectStatus,
+            renderedThreadIds,
+            showEmptyThreadState,
+            shouldShowThreadPanel,
+            isThreadListExpanded,
+          };
+        })
+        .filter(
+          (renderedProject) => !hasThreadSearch || renderedProject.renderedThreadIds.length > 0,
+        ),
     [
       appSettings.sidebarThreadSortOrder,
       expandedThreadListsByProject,
@@ -2169,7 +2200,6 @@ export default function Sidebar() {
       routeThreadId,
       sortedProjects,
       sidebarThreadsById,
-      showArchivedThreads,
       threadIdsByProjectId,
       threadLastVisitedAtById,
     ],
@@ -2177,14 +2207,19 @@ export default function Sidebar() {
   const pinnedRenderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
-        items: renderedProjects.filter((renderedProject) => pinnedProjectIdSet.has(renderedProject.project.id)),
+        items: renderedProjects.filter((renderedProject) =>
+          pinnedProjectIdSet.has(renderedProject.project.id),
+        ),
         preferredIds: pinnedProjectIds,
         getId: (renderedProject) => renderedProject.project.id,
       }),
     [pinnedProjectIdSet, pinnedProjectIds, renderedProjects],
   );
   const unpinnedRenderedProjects = useMemo(
-    () => renderedProjects.filter((renderedProject) => !pinnedProjectIdSet.has(renderedProject.project.id)),
+    () =>
+      renderedProjects.filter(
+        (renderedProject) => !pinnedProjectIdSet.has(renderedProject.project.id),
+      ),
     [pinnedProjectIdSet, renderedProjects],
   );
   const projectSections = useMemo(
@@ -2196,7 +2231,9 @@ export default function Sidebar() {
       projectSections.flatMap((section) =>
         section.groupName !== null &&
         section.projects.length > 0 &&
-        section.projects.every((renderedProject) => !autoExpandedProjectIdSet.has(renderedProject.project.id))
+        section.projects.every(
+          (renderedProject) => !autoExpandedProjectIdSet.has(renderedProject.project.id),
+        )
           ? [section.groupName]
           : [],
       ),
@@ -2228,18 +2265,16 @@ export default function Sidebar() {
 
   const visibleSidebarThreadIds = useMemo(
     () =>
-      getVisibleSidebarThreadIds(
-        [
-          ...pinnedRenderedProjects,
-          ...projectSections.flatMap((section) =>
-            !hasThreadSearch &&
-            section.groupName !== null &&
-            collapsedProjectGroupSet.has(section.groupName)
-              ? []
-              : section.projects,
-          ),
-        ],
-      ),
+      getVisibleSidebarThreadIds([
+        ...pinnedRenderedProjects,
+        ...projectSections.flatMap((section) =>
+          !hasThreadSearch &&
+          section.groupName !== null &&
+          collapsedProjectGroupSet.has(section.groupName)
+            ? []
+            : section.projects,
+        ),
+      ]),
     [collapsedProjectGroupSet, hasThreadSearch, pinnedRenderedProjects, projectSections],
   );
   const threadJumpCommandById = useMemo(() => {
@@ -2528,11 +2563,7 @@ export default function Sidebar() {
                 data-thread-selection-safe
                 className="flex min-h-10 w-full translate-x-0 items-center px-3 text-left text-xs text-muted-foreground/60 md:h-6 md:min-h-0 md:px-2 md:text-[10px]"
               >
-                <span>
-                  {showArchivedThreads
-                    ? "No threads in this project yet."
-                    : "No active threads yet. Start one with the compose button."}
-                </span>
+                <span>No active threads yet. Start one with the compose button.</span>
               </div>
             </SidebarMenuSubItem>
           ) : null}
@@ -2648,15 +2679,14 @@ export default function Sidebar() {
   }
 
   function renderProjectSections() {
-    const ungroupedSection =
-      projectSections.find((section) => section.groupName === null) ?? null;
+    const ungroupedSection = projectSections.find((section) => section.groupName === null) ?? null;
     const groupedSections = projectSections.filter((section) => section.groupName !== null);
     const content = (
       <div ref={attachProjectListAutoAnimateRef} className="space-y-2">
         {pinnedRenderedProjects.length > 0 ? (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-                <span>Pinned</span>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              <span>Pinned</span>
               <span className="inline-flex items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal text-muted-foreground/70">
                 {pinnedRenderedProjects.length}
               </span>
@@ -2682,9 +2712,7 @@ export default function Sidebar() {
             routeThreadId !== null &&
             section.projects.some((project) => project.renderedThreadIds.includes(routeThreadId));
           const isCollapsed =
-            !hasThreadSearch &&
-            collapsedProjectGroupSet.has(groupName) &&
-            !containsActiveThread;
+            !hasThreadSearch && collapsedProjectGroupSet.has(groupName) && !containsActiveThread;
 
           return (
             <div key={section.key} className="space-y-1 rounded-xl bg-muted/18 p-1.5">
@@ -2709,17 +2737,17 @@ export default function Sidebar() {
                   );
                 }}
               />
-              {!isCollapsed
-                ? section.projects.length > 0
-                  ? renderProjectList(section.projects, {
-                      draggable: canDragProjects,
-                    })
-                  : (
-                    <div className="rounded-md border border-dashed border-border/60 bg-background/70 px-3 py-2 text-[11px] text-muted-foreground/70">
-                      No projects in this workspace yet.
-                    </div>
-                  )
-                : null}
+              {!isCollapsed ? (
+                section.projects.length > 0 ? (
+                  renderProjectList(section.projects, {
+                    draggable: canDragProjects,
+                  })
+                ) : (
+                  <div className="rounded-md border border-dashed border-border/60 bg-background/70 px-3 py-2 text-[11px] text-muted-foreground/70">
+                    No projects in this workspace yet.
+                  </div>
+                )
+              ) : null}
             </div>
           );
         })}
@@ -2848,6 +2876,17 @@ export default function Sidebar() {
     setOpen(false);
     void navigate({ to: "/settings" });
   }, [isMobile, navigate, runSidebarNavigation, setOpen]);
+  const handleOpenArchived = useCallback(() => {
+    if (isMobile) {
+      runSidebarNavigation(() => {
+        void navigate({ to: "/archived" });
+      });
+      return;
+    }
+
+    setOpen(false);
+    void navigate({ to: "/archived" });
+  }, [isMobile, navigate, runSidebarNavigation, setOpen]);
   const arm64IntelBuildWarningDescription =
     desktopUpdateState && showArm64IntelBuildWarning
       ? getArm64IntelBuildWarningDescription(desktopUpdateState)
@@ -2969,245 +3008,267 @@ export default function Sidebar() {
       {isElectron ? (
         <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
           {wordmark}
+          <div className="ms-auto flex items-center gap-1 [-webkit-app-region:no-drag]">
+            <button
+              type="button"
+              aria-label={
+                archivedThreadCount > 0
+                  ? `View archived threads (${archivedThreadCount})`
+                  : "View archived threads"
+              }
+              title={
+                archivedThreadCount > 0
+                  ? `View archived threads (${archivedThreadCount})`
+                  : "View archived threads"
+              }
+              className={`inline-flex size-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
+                isArchivedRoute
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              }`}
+              onClick={handleOpenArchived}
+            >
+              <ArchiveIcon className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Open settings"
+              title="Open settings"
+              className={`inline-flex size-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
+                isSettingsRoute
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              }`}
+              onClick={handleOpenSettings}
+            >
+              <SettingsIcon className="size-3.5" />
+            </button>
+          </div>
         </SidebarHeader>
       ) : (
         <SidebarHeader className="flex-row items-center justify-between gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
           {wordmark}
-          <button
-            type="button"
-            aria-label="Open settings"
-            title="Open settings"
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:size-8 md:rounded-md"
-            onClick={handleOpenSettings}
-          >
-            <SettingsIcon className="size-5 md:size-3.5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              aria-label={
+                archivedThreadCount > 0
+                  ? `View archived threads (${archivedThreadCount})`
+                  : "View archived threads"
+              }
+              title={
+                archivedThreadCount > 0
+                  ? `View archived threads (${archivedThreadCount})`
+                  : "View archived threads"
+              }
+              className={`inline-flex size-11 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:size-8 md:rounded-md ${
+                isArchivedRoute
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              }`}
+              onClick={handleOpenArchived}
+            >
+              <ArchiveIcon className="size-5 md:size-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Open settings"
+              title="Open settings"
+              className={`inline-flex size-11 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:size-8 md:rounded-md ${
+                isSettingsRoute
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              }`}
+              onClick={handleOpenSettings}
+            >
+              <SettingsIcon className="size-5 md:size-3.5" />
+            </button>
+          </div>
         </SidebarHeader>
       )}
 
-      {isOnSettings ? (
-        <SettingsSidebarNav pathname={pathname} />
-      ) : (
-        <>
-          <SidebarContent className="gap-0">
-            {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
-              <SidebarGroup className="px-2 pt-2 pb-0">
-                <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
-                  <TriangleAlertIcon />
-                  <AlertTitle>Intel build on Apple Silicon</AlertTitle>
-                  <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
-                  {desktopUpdateButtonAction !== "none" ? (
-                    <AlertAction>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        disabled={desktopUpdateButtonDisabled}
-                        onClick={handleDesktopUpdateButtonClick}
-                      >
-                        {desktopUpdateButtonAction === "download"
-                          ? "Download ARM build"
-                          : "Install ARM build"}
-                      </Button>
-                    </AlertAction>
-                  ) : null}
-                </Alert>
-              </SidebarGroup>
-            ) : null}
-            <SidebarGroup className="px-2 py-2">
-              {shouldShowProjectPathEntry && addProjectDraft ? (
-                <div className="mb-2 space-y-2 rounded-lg border border-border/70 bg-secondary/40 p-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground/90">New project</p>
-                      <p className="text-[10px] text-muted-foreground/70">
-                        {`Add a project to ${addProjectDraft.groupName}.`}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      aria-label="Close add form"
-                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                      onClick={() => {
-                        setAddProjectDraft(null);
-                        setAddProjectError(null);
-                        setNewCwd("");
-                      }}
-                    >
-                      <XIcon className="size-3.5" />
-                    </button>
-                  </div>
-
-                  <div className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
-                    {addProjectDraft.groupEmoji ? (
-                      <span className="text-sm leading-none">{addProjectDraft.groupEmoji}</span>
-                    ) : (
-                      <FolderIcon className="size-3.5" />
-                    )}
-                    <span className="truncate">{addProjectDraft.groupName}</span>
-                  </div>
-
-                  {isElectron && (
-                    <button
-                      type="button"
-                      className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => void handlePickFolder(addProjectDraft)}
-                      disabled={isPickingFolder || isAddingProject}
-                    >
-                      <FolderIcon className="size-3.5" />
-                      {isPickingFolder ? "Picking folder..." : "Browse for project"}
-                    </button>
-                  )}
-                  <div className="flex gap-1.5">
-                    <input
-                      ref={addProjectInputRef}
-                      className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
-                        addProjectError
-                          ? "border-red-500/70 focus:border-red-500"
-                          : "border-border focus:border-ring"
-                      }`}
-                      placeholder="/path/to/project"
-                      value={newCwd}
-                      onChange={(event) => {
-                        setNewCwd(event.target.value);
-                        setAddProjectError(null);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") handleAddProject();
-                        if (event.key === "Escape") {
-                          setAddProjectDraft(null);
-                          setAddProjectError(null);
-                          setNewCwd("");
-                        }
-                      }}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
-                      onClick={handleAddProject}
-                      disabled={!canAddProject}
-                    >
-                      {isAddingProject ? "Adding..." : "Add project"}
-                    </button>
-                  </div>
-                  {addProjectError && (
-                    <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
-                      {addProjectError}
-                    </p>
-                  )}
-                </div>
+      <SidebarContent className="gap-0">
+        {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
+          <SidebarGroup className="px-2 pt-2 pb-0">
+            <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
+              <TriangleAlertIcon />
+              <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+              <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
+              {desktopUpdateButtonAction !== "none" ? (
+                <AlertAction>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={desktopUpdateButtonDisabled}
+                    onClick={handleDesktopUpdateButtonClick}
+                  >
+                    {desktopUpdateButtonAction === "download"
+                      ? "Download ARM build"
+                      : "Install ARM build"}
+                  </Button>
+                </AlertAction>
               ) : null}
-
-              <div className="mb-2 flex items-center gap-1.5 px-1">
-                <div className="relative min-w-0 flex-1">
-                  <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground/50" />
-                  <Input
-                    ref={threadSearchInputRef}
-                    value={threadSearchQuery}
-                    onChange={(event) => setThreadSearchQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape" && threadSearchQuery.length > 0) {
-                        event.preventDefault();
-                        setThreadSearchQuery("");
-                      }
-                    }}
-                    placeholder="Search"
-                    disabled={projects.length === 0}
-                    className="h-11 rounded-xl border-border bg-secondary pr-10 pl-10 text-[17px] md:h-8 md:rounded-md md:pr-8 md:pl-8 md:text-sm disabled:cursor-default disabled:opacity-60"
-                  />
-                  {threadSearchQuery.length > 0 ? (
-                    <button
-                      type="button"
-                      aria-label="Clear thread search"
-                      className="absolute top-1/2 right-1.5 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground md:size-5 md:rounded-md"
-                      onClick={() => setThreadSearchQuery("")}
-                    >
-                      <XIcon className="size-4 md:size-3.5" />
-                    </button>
-                  ) : null}
+            </Alert>
+          </SidebarGroup>
+        ) : null}
+        <SidebarGroup className="px-2 py-2">
+          {shouldShowProjectPathEntry && addProjectDraft ? (
+            <div className="mb-2 space-y-2 rounded-lg border border-border/70 bg-secondary/40 p-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-foreground/90">New project</p>
+                  <p className="text-[10px] text-muted-foreground/70">
+                    {`Add a project to ${addProjectDraft.groupName}.`}
+                  </p>
                 </div>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label="Add workspace"
-                        className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-border bg-secondary text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground md:size-8 md:rounded-md"
-                        onClick={() => handleStartAddWorkspace()}
-                      />
-                    }
-                  >
-                    <FolderPlusIcon className="size-4.5 md:size-3.5" />
-                  </TooltipTrigger>
-                  <TooltipPopup side="right">Add workspace</TooltipPopup>
-                </Tooltip>
-                {archivedThreadCount > 0 ? (
-                  <button
-                    type="button"
-                    className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border px-3 text-xs font-medium transition-colors md:h-8 md:gap-1.5 md:rounded-md md:px-2 md:text-[10px] ${
-                      showArchivedThreads
-                        ? "border-primary/30 bg-primary/10 text-foreground"
-                        : "border-border bg-secondary text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                    }`}
-                    onClick={() => setShowArchivedThreads(!showArchivedThreads)}
-                  >
-                    {showArchivedThreads ? (
-                      <ArchiveXIcon className="size-4 md:size-3.5" />
-                    ) : (
-                      <ArchiveIcon className="size-4 md:size-3.5" />
-                    )}
-                    <span>{showArchivedThreads ? "Hide archived" : "Show archived"}</span>
-                    <span className="inline-flex items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground/70 md:px-1 md:text-[9px]">
-                      {archivedThreadCount}
-                    </span>
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  aria-label="Close add form"
+                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={() => {
+                    setAddProjectDraft(null);
+                    setAddProjectError(null);
+                    setNewCwd("");
+                  }}
+                >
+                  <XIcon className="size-3.5" />
+                </button>
               </div>
 
-              {renderProjectSections()}
+              <div className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                {addProjectDraft.groupEmoji ? (
+                  <span className="text-sm leading-none">{addProjectDraft.groupEmoji}</span>
+                ) : (
+                  <FolderIcon className="size-3.5" />
+                )}
+                <span className="truncate">{addProjectDraft.groupName}</span>
+              </div>
 
-              {hasThreadSearch && renderedProjects.length === 0 ? (
-                <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-                  No matching threads
-                </div>
-              ) : null}
-
-              {projects.length === 0 && !shouldShowProjectPathEntry && !hasThreadSearch && (
-                <div className="space-y-1 px-2 pt-4 text-center text-xs text-muted-foreground/60">
-                  <p>No projects yet</p>
-                  <p>Add a workspace to start organizing threads here.</p>
-                </div>
+              {isElectron && (
+                <button
+                  type="button"
+                  className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void handlePickFolder(addProjectDraft)}
+                  disabled={isPickingFolder || isAddingProject}
+                >
+                  <FolderIcon className="size-3.5" />
+                  {isPickingFolder ? "Picking folder..." : "Browse for project"}
+                </button>
               )}
-            </SidebarGroup>
-          </SidebarContent>
-
-          <SidebarSeparator />
-          <SidebarFooter className="p-2">
-            <SidebarUpdatePill />
-            <div className="flex items-center justify-between gap-2">
-              <SidebarMenu className="min-w-0 flex-1">
-                {isElectron ? (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      size="sm"
-                      className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                      onClick={handleOpenSettings}
-                    >
-                      <SettingsIcon className="size-3.5" />
-                      <span className="text-xs">Settings</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ) : null}
-              </SidebarMenu>
-              <SidebarTrigger
-                aria-label="Collapse sidebar"
-                title="Collapse sidebar"
-                className="hidden shrink-0 text-muted-foreground/70 hover:bg-accent hover:text-foreground md:inline-flex"
-              />
+              <div className="flex gap-1.5">
+                <input
+                  ref={addProjectInputRef}
+                  className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                    addProjectError
+                      ? "border-red-500/70 focus:border-red-500"
+                      : "border-border focus:border-ring"
+                  }`}
+                  placeholder="/path/to/project"
+                  value={newCwd}
+                  onChange={(event) => {
+                    setNewCwd(event.target.value);
+                    setAddProjectError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleAddProject();
+                    if (event.key === "Escape") {
+                      setAddProjectDraft(null);
+                      setAddProjectError(null);
+                      setNewCwd("");
+                    }
+                  }}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                  onClick={handleAddProject}
+                  disabled={!canAddProject}
+                >
+                  {isAddingProject ? "Adding..." : "Add project"}
+                </button>
+              </div>
+              {addProjectError && (
+                <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
+                  {addProjectError}
+                </p>
+              )}
             </div>
-          </SidebarFooter>
-        </>
-      )}
+          ) : null}
+
+          <div className="mb-2 flex items-center gap-1.5 px-1">
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground/50" />
+              <Input
+                ref={threadSearchInputRef}
+                value={threadSearchQuery}
+                onChange={(event) => setThreadSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && threadSearchQuery.length > 0) {
+                    event.preventDefault();
+                    setThreadSearchQuery("");
+                  }
+                }}
+                placeholder="Search"
+                disabled={projects.length === 0}
+                className="h-11 rounded-xl border-border bg-secondary pr-10 pl-10 text-[17px] md:h-8 md:rounded-md md:pr-8 md:pl-8 md:text-sm disabled:cursor-default disabled:opacity-60"
+              />
+              {threadSearchQuery.length > 0 ? (
+                <button
+                  type="button"
+                  aria-label="Clear thread search"
+                  className="absolute top-1/2 right-1.5 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground md:size-5 md:rounded-md"
+                  onClick={() => setThreadSearchQuery("")}
+                >
+                  <XIcon className="size-4 md:size-3.5" />
+                </button>
+              ) : null}
+            </div>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Add workspace"
+                    className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-border bg-secondary text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground md:size-8 md:rounded-md"
+                    onClick={() => handleStartAddWorkspace()}
+                  />
+                }
+              >
+                <FolderPlusIcon className="size-4.5 md:size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Add workspace</TooltipPopup>
+            </Tooltip>
+          </div>
+
+          {renderProjectSections()}
+
+          {hasThreadSearch && renderedProjects.length === 0 ? (
+            <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+              No matching threads
+            </div>
+          ) : null}
+
+          {projects.length === 0 && !shouldShowProjectPathEntry && !hasThreadSearch && (
+            <div className="space-y-1 px-2 pt-4 text-center text-xs text-muted-foreground/60">
+              <p>No projects yet</p>
+              <p>Add a workspace to start organizing threads here.</p>
+            </div>
+          )}
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarSeparator />
+      <SidebarFooter className="p-2">
+        <SidebarUpdatePill />
+        <div className="flex items-center justify-end gap-2">
+          <SidebarTrigger
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            className="hidden shrink-0 text-muted-foreground/70 hover:bg-accent hover:text-foreground md:inline-flex"
+          />
+        </div>
+      </SidebarFooter>
 
       <Dialog
         open={workspaceCreateDraft !== null}

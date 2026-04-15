@@ -472,6 +472,54 @@ export function deriveWorkLogEntries(
   );
 }
 
+export function appendThreadErrorWorkEntry(
+  workEntries: ReadonlyArray<WorkLogEntry>,
+  input: {
+    error: string | null;
+    latestTurn:
+      | Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">
+      | null
+      | undefined;
+    fallbackCreatedAt?: string | null | undefined;
+  },
+): WorkLogEntry[] {
+  const normalizedError = input.error?.trim();
+  if (!normalizedError) {
+    return [...workEntries];
+  }
+
+  const hasMatchingEntry = workEntries.some(
+    (entry) =>
+      entry.tone === "error" &&
+      (entry.detail?.trim() === normalizedError || entry.label.trim() === normalizedError),
+  );
+  if (hasMatchingEntry) {
+    return [...workEntries];
+  }
+
+  const createdAt =
+    input.latestTurn?.completedAt ??
+    input.latestTurn?.startedAt ??
+    input.fallbackCreatedAt?.trim() ??
+    null;
+  if (!createdAt) {
+    return [...workEntries];
+  }
+
+  return [
+    ...workEntries,
+    {
+      id: ["thread-error", input.latestTurn?.turnId ?? "session", createdAt, normalizedError].join(
+        ":",
+      ),
+      createdAt,
+      label: "Error",
+      detail: normalizedError,
+      tone: "error",
+    },
+  ];
+}
+
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
   if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") {
     return false;
