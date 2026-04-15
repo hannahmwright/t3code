@@ -47,9 +47,13 @@ const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
-const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
+// Remote upstream refresh is background hygiene, not a latency-sensitive foreground action.
+// Keep successful refreshes reasonably fresh without constantly poking remotes.
+const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.minutes(2);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
-const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
+// When a remote starts timing out, back off hard so one flaky repo doesn't keep
+// consuming server capacity and degrading unrelated requests.
+const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;

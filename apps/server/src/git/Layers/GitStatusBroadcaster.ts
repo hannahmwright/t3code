@@ -26,7 +26,9 @@ import {
 } from "../Services/GitStatusBroadcaster.ts";
 import { GitManager } from "../Services/GitManager.ts";
 
-const GIT_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
+// Remote status drives sidebar metadata, so a slower cadence is fine and avoids
+// repeatedly waking git/network work while the app is otherwise idle.
+const GIT_STATUS_REFRESH_INTERVAL = Duration.minutes(2);
 
 interface GitStatusChange {
   readonly cwd: string;
