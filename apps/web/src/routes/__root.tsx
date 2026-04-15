@@ -712,6 +712,7 @@ function EventRouter() {
       syncThreads(
         threads.map((thread) => ({
           id: thread.id,
+          latestTurnCompletedAt: thread.latestTurn?.completedAt ?? undefined,
           seedVisitedAt: thread.updatedAt ?? thread.createdAt,
         })),
       );
@@ -807,6 +808,7 @@ function EventRouter() {
         syncThreads(
           threads.map((thread) => ({
             id: thread.id,
+            latestTurnCompletedAt: thread.latestTurn?.completedAt ?? undefined,
             seedVisitedAt: thread.updatedAt ?? thread.createdAt,
           })),
         );

@@ -57,6 +57,7 @@ export interface SyncProjectInput {
 
 export interface SyncThreadInput {
   id: ThreadId;
+  latestTurnCompletedAt?: string | undefined;
   seedVisitedAt?: string | undefined;
 }
 
@@ -392,12 +393,32 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
     ),
   );
   for (const thread of threads) {
+    const initialVisitedAt = thread.latestTurnCompletedAt ?? thread.seedVisitedAt;
+    const previousVisitedAt = nextThreadLastVisitedAtById[thread.id];
     if (
-      nextThreadLastVisitedAtById[thread.id] === undefined &&
-      thread.seedVisitedAt !== undefined &&
-      thread.seedVisitedAt.length > 0
+      previousVisitedAt === undefined &&
+      initialVisitedAt !== undefined &&
+      initialVisitedAt.length > 0
     ) {
-      nextThreadLastVisitedAtById[thread.id] = thread.seedVisitedAt;
+      nextThreadLastVisitedAtById[thread.id] = initialVisitedAt;
+      continue;
+    }
+
+    if (
+      previousVisitedAt !== undefined &&
+      thread.latestTurnCompletedAt !== undefined &&
+      thread.seedVisitedAt !== undefined &&
+      previousVisitedAt === thread.seedVisitedAt
+    ) {
+      const latestTurnCompletedAtMs = Date.parse(thread.latestTurnCompletedAt);
+      const previousVisitedAtMs = Date.parse(previousVisitedAt);
+      if (
+        Number.isFinite(latestTurnCompletedAtMs) &&
+        Number.isFinite(previousVisitedAtMs) &&
+        latestTurnCompletedAtMs > previousVisitedAtMs
+      ) {
+        nextThreadLastVisitedAtById[thread.id] = thread.latestTurnCompletedAt;
+      }
     }
   }
   if (recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById)) {

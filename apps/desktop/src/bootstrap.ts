@@ -1,7 +1,8 @@
+const { createRequire } = require("node:module") as typeof import("node:module");
 const FS = require("node:fs") as typeof import("node:fs");
 const OS = require("node:os") as typeof import("node:os");
 const Path = require("node:path") as typeof import("node:path");
-const runtimeRequire = (0, eval)("require") as NodeRequire;
+const runtimeRequire = createRequire(__filename);
 
 let app: typeof import("electron").app | undefined;
 let dialog: typeof import("electron").dialog | undefined;

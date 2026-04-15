@@ -198,6 +198,44 @@ describe("uiStateStore pure functions", () => {
     });
   });
 
+  it("syncThreads prefers latest completed turn when seeding visit state", () => {
+    const thread1 = ThreadId.makeUnsafe("thread-1");
+    const initialState = makeUiState();
+
+    const next = syncThreads(initialState, [
+      {
+        id: thread1,
+        latestTurnCompletedAt: "2026-02-25T12:40:00.000Z",
+        seedVisitedAt: "2026-02-25T12:35:00.000Z",
+      },
+    ]);
+
+    expect(next.threadLastVisitedAtById).toEqual({
+      [thread1]: "2026-02-25T12:40:00.000Z",
+    });
+  });
+
+  it("syncThreads upgrades legacy seeded visit state to the latest completion", () => {
+    const thread1 = ThreadId.makeUnsafe("thread-1");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [thread1]: "2026-02-25T12:35:00.000Z",
+      },
+    });
+
+    const next = syncThreads(initialState, [
+      {
+        id: thread1,
+        latestTurnCompletedAt: "2026-02-25T12:40:00.000Z",
+        seedVisitedAt: "2026-02-25T12:35:00.000Z",
+      },
+    ]);
+
+    expect(next.threadLastVisitedAtById).toEqual({
+      [thread1]: "2026-02-25T12:40:00.000Z",
+    });
+  });
+
   it("setProjectExpanded updates expansion without touching order", () => {
     const project1 = ProjectId.makeUnsafe("project-1");
     const initialState = makeUiState({
