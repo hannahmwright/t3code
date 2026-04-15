@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   MessageId,
+  type OrchestrationThreadSnapshot,
   ProjectId,
   ThreadId,
   TurnId,
@@ -15,6 +16,7 @@ import {
   applyOrchestrationEvent,
   applyOrchestrationEvents,
   syncServerReadModel,
+  syncThreadSnapshot,
   type AppState,
 } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
@@ -175,6 +177,18 @@ function makeReadModelProject(
   };
 }
 
+function makeThreadSnapshot(
+  thread: OrchestrationReadModel["threads"][number] | null,
+  overrides: Partial<OrchestrationThreadSnapshot> = {},
+): OrchestrationThreadSnapshot {
+  return {
+    thread,
+    hasOlderMessages: false,
+    hasOlderActivities: false,
+    ...overrides,
+  };
+}
+
 describe("store read model sync", () => {
   it("marks bootstrap complete after snapshot sync", () => {
     const initialState: AppState = {
@@ -321,6 +335,81 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects.map((project) => project.id)).toEqual([project1, project2, project3]);
+  });
+
+  it("prepends older thread history without dropping newer rows", () => {
+    const initialState = makeState(
+      makeThread({
+        messages: [
+          {
+            id: MessageId.makeUnsafe("message-newer"),
+            role: "user",
+            text: "newer",
+            createdAt: "2026-02-27T00:00:02.000Z",
+            streaming: false,
+          },
+        ],
+        activities: [
+          {
+            id: EventId.makeUnsafe("activity-newer"),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Completed",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-02-27T00:00:03.000Z",
+            sequence: 2,
+          },
+        ],
+        hasOlderMessages: true,
+        hasOlderActivities: true,
+      }),
+    );
+
+    const olderSnapshot = makeThreadSnapshot(
+      makeReadModelThread({
+        messages: [
+          {
+            id: MessageId.makeUnsafe("message-older"),
+            role: "user",
+            text: "older",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-02-27T00:00:01.000Z",
+            updatedAt: "2026-02-27T00:00:01.000Z",
+          },
+        ],
+        activities: [
+          {
+            id: EventId.makeUnsafe("activity-older"),
+            tone: "tool",
+            kind: "tool.started",
+            summary: "Started",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-02-27T00:00:00.500Z",
+            sequence: 1,
+          },
+        ],
+      }),
+      {
+        hasOlderMessages: false,
+        hasOlderActivities: false,
+      },
+    );
+
+    const next = syncThreadSnapshot(initialState, olderSnapshot, "prepend-older");
+
+    expect(next.threads[0]?.messages.map((message) => message.id)).toEqual([
+      MessageId.makeUnsafe("message-older"),
+      MessageId.makeUnsafe("message-newer"),
+    ]);
+    expect(next.threads[0]?.activities.map((activity) => activity.id)).toEqual([
+      EventId.makeUnsafe("activity-older"),
+      EventId.makeUnsafe("activity-newer"),
+    ]);
+    expect(next.threads[0]?.hasOlderMessages).toBe(false);
+    expect(next.threads[0]?.hasOlderActivities).toBe(false);
   });
 });
 

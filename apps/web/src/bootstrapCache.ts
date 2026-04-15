@@ -1,6 +1,6 @@
 import {
   ModelSelection,
-  OrchestrationReadModel,
+  OrchestrationShellReadModel,
   OrchestrationLatestTurn,
   OrchestrationSessionStatus,
   ProjectId,
@@ -16,9 +16,8 @@ import {
 import * as Schema from "effect/Schema";
 
 import {
-  deriveShellBootstrapState,
+  deriveShellBootstrapStateFromShellReadModel,
   type ShellBootstrapState,
-  type ShellBootstrapThread,
 } from "./store";
 import {
   getLocalStorageItem,
@@ -190,15 +189,19 @@ export function persistServerConfigToBootstrapCache(serverConfig: ServerConfigDa
   });
 }
 
-function toShellBootstrapState(readModel: typeof OrchestrationReadModel.Type): ShellBootstrapState {
-  return deriveShellBootstrapState(readModel);
+function toShellBootstrapState(
+  shellReadModel: typeof OrchestrationShellReadModel.Type,
+): ShellBootstrapState {
+  return deriveShellBootstrapStateFromShellReadModel(shellReadModel);
 }
 
-export function persistReadModelToBootstrapCache(readModel: typeof OrchestrationReadModel.Type): void {
+export function persistShellReadModelToBootstrapCache(
+  shellReadModel: typeof OrchestrationShellReadModel.Type,
+): void {
   const current = readBootstrapCache();
   writeBootstrapCache({
     updatedAt: new Date().toISOString(),
     serverConfig: current?.serverConfig ?? null,
-    shellState: toShellBootstrapState(readModel),
+    shellState: toShellBootstrapState(shellReadModel),
   });
 }

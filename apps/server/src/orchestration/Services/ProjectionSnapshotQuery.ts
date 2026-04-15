@@ -10,6 +10,8 @@ import type {
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationReadModel,
+  OrchestrationShellReadModel,
+  OrchestrationThreadSnapshot,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -43,6 +45,25 @@ export interface ProjectionSnapshotQueryShape {
    * projector cursor state.
    */
   readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
+
+  /**
+   * Read a lightweight snapshot for shell bootstrap without thread history payloads.
+   */
+  readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationShellReadModel,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read a recent-window snapshot for a single thread.
+   */
+  readonly getThreadSnapshot: (
+    input: {
+      readonly threadId: ThreadId;
+      readonly beforeMessageCreatedAt: string | null;
+      readonly beforeActivityCreatedAt: string | null;
+    },
+  ) => Effect.Effect<OrchestrationThreadSnapshot, ProjectionRepositoryError>;
 
   /**
    * Read aggregate projection counts without hydrating the full read model.

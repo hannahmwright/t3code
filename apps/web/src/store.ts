@@ -11,6 +11,8 @@ import {
   type OrchestrationReadModel,
   type OrchestrationSession,
   type OrchestrationCheckpointSummary,
+  type OrchestrationShellReadModel,
+  type OrchestrationThreadSnapshot,
   type OrchestrationThread,
   type OrchestrationSessionStatus,
 } from "@t3tools/contracts";
@@ -214,7 +216,26 @@ function mapThread(thread: OrchestrationThread): Thread {
     worktreePath: thread.worktreePath,
     turnDiffSummaries,
     activities,
+    hasOlderMessages: false,
+    hasOlderActivities: false,
   };
+}
+
+function sortMessages(messages: ReadonlyArray<ChatMessage>): ChatMessage[] {
+  return [...messages].toSorted(
+    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+  );
+}
+
+function sortTurnDiffSummaries(
+  turnDiffSummaries: ReadonlyArray<Thread["turnDiffSummaries"][number]>,
+): Thread["turnDiffSummaries"] {
+  return [...turnDiffSummaries].toSorted(
+    (left, right) =>
+      (left.checkpointTurnCount ?? 0) - (right.checkpointTurnCount ?? 0) ||
+      left.completedAt.localeCompare(right.completedAt) ||
+      left.turnId.localeCompare(right.turnId),
+  );
 }
 
 function mapProject(project: OrchestrationReadModel["projects"][number]): Project {
@@ -672,6 +693,39 @@ export function deriveShellBootstrapState(
   };
 }
 
+export function deriveShellBootstrapStateFromShellReadModel(
+  shellReadModel: OrchestrationShellReadModel,
+): ShellBootstrapState {
+  const projects = shellReadModel.projects
+    .filter((project) => project.deletedAt === null)
+    .map(mapProject);
+  const threads = shellReadModel.threads.map((thread) => ({
+    id: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    modelSelection: normalizeModelSelection(thread.modelSelection),
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+    session: thread.session ? mapSession(thread.session) : null,
+    error: sanitizeThreadErrorMessage(thread.session?.lastError ?? null),
+    createdAt: thread.createdAt,
+    archivedAt: thread.archivedAt,
+    updatedAt: thread.updatedAt,
+    latestTurn: thread.latestTurn,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    latestUserMessageAt: thread.latestUserMessageAt,
+    hasPendingApprovals: thread.hasPendingApprovals,
+    hasPendingUserInput: thread.hasPendingUserInput,
+    hasActionableProposedPlan: thread.hasActionableProposedPlan,
+  }));
+
+  return {
+    projects,
+    threads,
+  };
+}
+
 export function hydrateShellBootstrapState(
   state: AppState,
   shellState: ShellBootstrapState,
@@ -701,6 +755,8 @@ export function hydrateShellBootstrapState(
     worktreePath: thread.worktreePath,
     turnDiffSummaries: [],
     activities: [],
+    hasOlderMessages: false,
+    hasOlderActivities: false,
   }) satisfies Thread);
   const sidebarThreadsById = Object.fromEntries(
     shellState.threads.map((thread) => [
@@ -733,6 +789,78 @@ export function hydrateShellBootstrapState(
     sidebarThreadsById,
     threadIdsByProjectId,
     bootstrapComplete: true,
+  };
+}
+
+export function syncThreadSnapshot(
+  state: AppState,
+  threadSnapshot: OrchestrationThreadSnapshot,
+  mode: "replace" | "prepend-older" = "replace",
+): AppState {
+  if (threadSnapshot.thread === null || threadSnapshot.thread.deletedAt !== null) {
+    return state;
+  }
+
+  const nextThreadBase = mapThread(threadSnapshot.thread);
+  const nextThread: Thread = {
+    ...nextThreadBase,
+    hasOlderMessages: threadSnapshot.hasOlderMessages,
+    hasOlderActivities: threadSnapshot.hasOlderActivities,
+  };
+  const existingIndex = state.threads.findIndex((thread) => thread.id === nextThread.id);
+  const existingThread = existingIndex >= 0 ? state.threads[existingIndex] : null;
+  const mergedThread =
+    mode === "prepend-older" && existingThread
+      ? ({
+          ...nextThread,
+          messages: sortMessages([...nextThread.messages, ...existingThread.messages]),
+          proposedPlans: [...existingThread.proposedPlans, ...nextThread.proposedPlans].filter(
+            (plan, index, plans) => index === plans.findIndex((entry) => entry.id === plan.id),
+          ),
+          turnDiffSummaries: sortTurnDiffSummaries([
+            ...existingThread.turnDiffSummaries,
+            ...nextThread.turnDiffSummaries,
+          ].filter(
+            (summary, index, summaries) =>
+              index ===
+              summaries.findIndex(
+                (entry) =>
+                  entry.turnId === summary.turnId &&
+                  entry.checkpointTurnCount === summary.checkpointTurnCount,
+              ),
+          )),
+          activities: [...existingThread.activities, ...nextThread.activities]
+            .filter(
+              (activity, index, activities) =>
+                index === activities.findIndex((entry) => entry.id === activity.id),
+            )
+            .toSorted(compareActivities),
+          hasOlderMessages: threadSnapshot.hasOlderMessages,
+          hasOlderActivities: threadSnapshot.hasOlderActivities,
+        } satisfies Thread)
+      : nextThread;
+  const threads =
+    existingIndex >= 0
+      ? state.threads.map((thread, index) => (index === existingIndex ? mergedThread : thread))
+      : [...state.threads, mergedThread];
+  const sidebarThreadsById = {
+    ...state.sidebarThreadsById,
+    [mergedThread.id]: buildSidebarThreadSummary(mergedThread),
+  };
+  const threadIdsByProjectId =
+    existingIndex >= 0
+      ? state.threadIdsByProjectId
+      : appendThreadIdByProjectId(
+          state.threadIdsByProjectId,
+          mergedThread.projectId,
+          mergedThread.id,
+        );
+
+  return {
+    ...state,
+    threads,
+    sidebarThreadsById,
+    threadIdsByProjectId,
   };
 }
 
@@ -1297,6 +1425,10 @@ export function setThreadBranch(
 
 interface AppStore extends AppState {
   syncServerReadModel: (readModel: OrchestrationReadModel) => void;
+  syncThreadSnapshot: (
+    threadSnapshot: OrchestrationThreadSnapshot,
+    mode?: "replace" | "prepend-older",
+  ) => void;
   applyOrchestrationEvent: (event: OrchestrationEvent) => void;
   applyOrchestrationEvents: (events: ReadonlyArray<OrchestrationEvent>) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
@@ -1306,6 +1438,8 @@ interface AppStore extends AppState {
 export const useStore = create<AppStore>((set) => ({
   ...initialState,
   syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
+  syncThreadSnapshot: (threadSnapshot, mode) =>
+    set((state) => syncThreadSnapshot(state, threadSnapshot, mode)),
   applyOrchestrationEvent: (event) => set((state) => applyOrchestrationEvent(state, event)),
   applyOrchestrationEvents: (events) => set((state) => applyOrchestrationEvents(state, events)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),

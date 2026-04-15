@@ -113,6 +113,8 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  hasOlderMessages?: boolean | undefined;
+  hasOlderActivities?: boolean | undefined;
 }
 
 export interface SidebarThreadSummary {

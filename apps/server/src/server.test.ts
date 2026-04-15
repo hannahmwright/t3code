@@ -29,6 +29,7 @@ import {
   FileSystem,
   Layer,
   ManagedRuntime,
+  Option,
   Path,
   Stream,
 } from "effect";
@@ -387,6 +388,14 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery)({
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          getShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: 0,
+              projects: [],
+              threads: [],
+              updatedAt: new Date(0).toISOString(),
+            }),
+          getThreadSnapshot: () => Effect.succeed(Option.none()),
           ...options?.layers?.projectionSnapshotQuery,
         }),
       ),

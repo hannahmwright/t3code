@@ -49,10 +49,13 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetThreadSnapshotInput,
+  OrchestrationGetThreadSnapshotResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationEvent,
   OrchestrationReadModel,
+  OrchestrationShellReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
 import { ServerSettings, ServerSettingsPatch } from "./settings";
@@ -194,6 +197,13 @@ export interface NativeApi {
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
+    getShellSnapshot: () => Promise<OrchestrationShellReadModel>;
+    getThreadSnapshot: (
+      input: Pick<
+        OrchestrationGetThreadSnapshotInput,
+        "threadId" | "beforeMessageCreatedAt" | "beforeActivityCreatedAt"
+      >,
+    ) => Promise<OrchestrationGetThreadSnapshotResult>;
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
     getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
     getFullThreadDiff: (

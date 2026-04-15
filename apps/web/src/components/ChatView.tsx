@@ -846,6 +846,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
+  const syncThreadSnapshot = useStore((store) => store.syncThreadSnapshot);
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
@@ -860,6 +861,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return openTerminalThreadIds.filter((nextThreadId) => existingThreadIds.has(nextThreadId));
   }, [draftThreadIds, openTerminalThreadIds, serverThreadIds]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const [isLoadingOlderHistory, setIsLoadingOlderHistory] = useState(false);
   const threadPlanCatalog = useThreadPlanCatalog(
     useMemo(() => {
       const threadIds: ThreadId[] = [];
@@ -1458,6 +1460,58 @@ export default function ChatView({ threadId }: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const oldestLoadedMessageAt = activeThread?.messages[0]?.createdAt ?? null;
+  const oldestLoadedActivityAt = activeThread?.activities[0]?.createdAt ?? null;
+  const hasOlderHistory =
+    (activeThread?.hasOlderMessages ?? false) || (activeThread?.hasOlderActivities ?? false);
+  const loadOlderHistory = useCallback(async () => {
+    if (
+      !activeThreadId ||
+      isLocalDraftThread ||
+      isLoadingOlderHistory ||
+      !hasOlderHistory ||
+      readNativeApi() === null
+    ) {
+      return;
+    }
+
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+
+    setIsLoadingOlderHistory(true);
+    try {
+      const snapshot = await api.orchestration.getThreadSnapshot({
+        threadId: activeThreadId,
+        beforeMessageCreatedAt: activeThread?.hasOlderMessages ? oldestLoadedMessageAt : null,
+        beforeActivityCreatedAt: activeThread?.hasOlderActivities ? oldestLoadedActivityAt : null,
+      });
+      syncThreadSnapshot(snapshot, "prepend-older");
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to load older history",
+        description:
+          error instanceof Error ? error.message : "Unknown error loading older history.",
+      });
+    } finally {
+      setIsLoadingOlderHistory(false);
+    }
+  }, [
+    activeThread?.hasOlderActivities,
+    activeThread?.hasOlderMessages,
+    activeThreadId,
+    hasOlderHistory,
+    isLoadingOlderHistory,
+    isLocalDraftThread,
+    oldestLoadedActivityAt,
+    oldestLoadedMessageAt,
+    syncThreadSnapshot,
+  ]);
+  useEffect(() => {
+    setIsLoadingOlderHistory(false);
+  }, [activeThreadId]);
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
@@ -4104,6 +4158,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 <MessagesTimeline
                   key={activeThread.id}
                   hasMessages={timelineEntries.length > 0}
+                  showLoadOlderHistory={hasOlderHistory}
+                  isLoadingOlderHistory={isLoadingOlderHistory}
+                  onLoadOlderHistory={loadOlderHistory}
                   isWorking={isWorking}
                   activeTurnInProgress={isWorking || !latestTurnSettled}
                   activeTurnStartedAt={activeWorkStartedAt}

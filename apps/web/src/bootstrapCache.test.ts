@@ -2,14 +2,14 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ThreadId,
-  type OrchestrationReadModel,
+  type OrchestrationShellReadModel,
   type ServerConfig,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearBootstrapCache,
-  persistReadModelToBootstrapCache,
+  persistShellReadModelToBootstrapCache,
   persistServerConfigToBootstrapCache,
   readBootstrapCache,
 } from "./bootstrapCache";
@@ -43,7 +43,7 @@ function makeServerConfig(): ServerConfig {
   };
 }
 
-function makeReadModel(): OrchestrationReadModel {
+function makeShellReadModel(): OrchestrationShellReadModel {
   return {
     snapshotSequence: 4,
     projects: [
@@ -76,15 +76,14 @@ function makeReadModel(): OrchestrationReadModel {
         branch: null,
         worktreePath: null,
         session: null,
-        messages: [],
-        proposedPlans: [],
-        checkpoints: [],
-        activities: [],
         latestTurn: null,
         createdAt: "2026-04-10T11:10:00.000Z",
         updatedAt: "2026-04-10T11:12:00.000Z",
-        deletedAt: null,
         archivedAt: null,
+        latestUserMessageAt: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasActionableProposedPlan: false,
       },
     ],
     updatedAt: "2026-04-10T11:12:00.000Z",
@@ -104,10 +103,10 @@ describe("bootstrapCache", () => {
 
   it("persists and restores the latest bootstrap payload", () => {
     const serverConfig = makeServerConfig();
-    const readModel = makeReadModel();
+    const shellReadModel = makeShellReadModel();
 
     persistServerConfigToBootstrapCache(serverConfig);
-    persistReadModelToBootstrapCache(readModel);
+    persistShellReadModelToBootstrapCache(shellReadModel);
 
     expect(readBootstrapCache()).toMatchObject({
       updatedAt: expect.any(String),
@@ -132,14 +131,14 @@ describe("bootstrapCache", () => {
   });
 
   it("persists shell state when a thread session has no active turn", () => {
-    const readModel = makeReadModel();
-    const firstThread = readModel.threads[0];
+    const shellReadModel = makeShellReadModel();
+    const firstThread = shellReadModel.threads[0];
     expect(firstThread).toBeDefined();
     if (!firstThread) {
       throw new Error("Missing bootstrap thread fixture");
     }
-    const nextReadModel: OrchestrationReadModel = {
-      ...readModel,
+    const nextReadModel: OrchestrationShellReadModel = {
+      ...shellReadModel,
       threads: [
         {
           ...firstThread,
@@ -156,7 +155,7 @@ describe("bootstrapCache", () => {
       ],
     };
 
-    persistReadModelToBootstrapCache(nextReadModel);
+    persistShellReadModelToBootstrapCache(nextReadModel);
 
     expect(readBootstrapCache()?.shellState?.threads[0]?.session).toMatchObject({
       provider: "codex",

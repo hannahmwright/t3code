@@ -15,7 +15,7 @@ import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
-import { persistReadModelToBootstrapCache } from "../bootstrapCache";
+import { persistShellReadModelToBootstrapCache } from "../bootstrapCache";
 import { isElectron } from "../env";
 import {
   WebSocketConnectionCoordinator,
@@ -42,7 +42,7 @@ import {
   clearPromotedDraftThreads,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import { useStore } from "../store";
+import { deriveShellBootstrapStateFromShellReadModel, hydrateShellBootstrapState, useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { migrateLocalSettingsToServer } from "../hooks/useSettings";
@@ -754,12 +754,12 @@ function EventRouter() {
         }
         needsBootstrapCacheRefresh = false;
         void api.orchestration
-          .getSnapshot()
+          .getShellSnapshot()
           .then((snapshot) => {
             if (disposed) {
               return;
             }
-            persistReadModelToBootstrapCache(snapshot);
+            persistShellReadModelToBootstrapCache(snapshot);
           })
           .catch(() => undefined);
       },
@@ -916,8 +916,9 @@ function EventRouter() {
         const snapshot = await api.orchestration.getSnapshot();
         if (!disposed) {
           syncServerReadModel(snapshot);
-          persistReadModelToBootstrapCache(snapshot);
           reconcileSnapshotDerivedState();
+          needsBootstrapCacheRefresh = true;
+          void bootstrapCacheRefreshThrottler.maybeExecute();
           if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
             void runReplayRecovery("sequence-gap");
           }
@@ -928,10 +929,22 @@ function EventRouter() {
       }
     };
 
-    const bootstrapFromSnapshot = async (): Promise<void> => {
-      await runSnapshotRecovery("bootstrap");
+    const bootstrapFromShell = async (): Promise<void> => {
+      try {
+        const snapshot = await api.orchestration.getShellSnapshot();
+        if (disposed) {
+          return;
+        }
+        useStore.setState((state) =>
+          hydrateShellBootstrapState(state, deriveShellBootstrapStateFromShellReadModel(snapshot)),
+        );
+        persistShellReadModelToBootstrapCache(snapshot);
+        reconcileSnapshotDerivedState();
+      } catch {
+        await runSnapshotRecovery("bootstrap");
+      }
     };
-    bootstrapFromSnapshotRef.current = bootstrapFromSnapshot;
+    bootstrapFromSnapshotRef.current = bootstrapFromShell;
 
     const fallbackToSnapshotRecovery = async (): Promise<void> => {
       await runSnapshotRecovery("replay-failed");

@@ -10,6 +10,7 @@ import {
   type DiffPanelMode,
 } from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { ensureNativeApi } from "../nativeApi";
 import {
   type DiffRouteSearch,
   parseDiffRouteSearch,
@@ -184,6 +185,7 @@ const DiffPanelInlineSidebar = (props: {
 
 function ChatThreadRouteView() {
   const bootstrapComplete = useStore((store) => store.bootstrapComplete);
+  const syncThreadSnapshot = useStore((store) => store.syncThreadSnapshot);
   const navigate = useNavigate();
   const threadId = Route.useParams({
     select: (params) => ThreadId.makeUnsafe(params.threadId),
@@ -233,6 +235,30 @@ function ChatThreadRouteView() {
       return;
     }
   }, [bootstrapComplete, navigate, routeThreadExists, threadId]);
+
+  useEffect(() => {
+    if (!bootstrapComplete || !routeThreadExists || draftThreadExists) {
+      return;
+    }
+
+    let cancelled = false;
+    void ensureNativeApi()
+      .orchestration.getThreadSnapshot({
+        threadId,
+        beforeMessageCreatedAt: null,
+        beforeActivityCreatedAt: null,
+      })
+      .then((snapshot) => {
+        if (!cancelled) {
+          syncThreadSnapshot(snapshot);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrapComplete, draftThreadExists, routeThreadExists, syncThreadSnapshot, threadId]);
 
   if (!bootstrapComplete || !routeThreadExists) {
     return null;

@@ -373,6 +373,34 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           ),
           { "rpc.aggregate": "orchestration" },
         ),
+      [ORCHESTRATION_WS_METHODS.getShellSnapshot]: (_input) =>
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.getShellSnapshot,
+          projectionSnapshotQuery.getShellSnapshot().pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetSnapshotError({
+                  message: "Failed to load orchestration shell snapshot",
+                  cause,
+                }),
+            ),
+          ),
+          { "rpc.aggregate": "orchestration" },
+        ),
+      [ORCHESTRATION_WS_METHODS.getThreadSnapshot]: (input) =>
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.getThreadSnapshot,
+          projectionSnapshotQuery.getThreadSnapshot(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetSnapshotError({
+                  message: "Failed to load orchestration thread snapshot",
+                  cause,
+                }),
+            ),
+          ),
+          { "rpc.aggregate": "orchestration" },
+        ),
       [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
         observeRpcEffect(
           ORCHESTRATION_WS_METHODS.dispatchCommand,

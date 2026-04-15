@@ -65,6 +65,9 @@ const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 
 interface MessagesTimelineProps {
   hasMessages: boolean;
+  showLoadOlderHistory?: boolean;
+  isLoadingOlderHistory?: boolean;
+  onLoadOlderHistory?: () => void;
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
@@ -100,6 +103,9 @@ interface MessagesTimelineProps {
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   hasMessages,
+  showLoadOlderHistory = false,
+  isLoadingOlderHistory = false,
+  onLoadOlderHistory,
   isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
@@ -571,6 +577,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       data-timeline-root="true"
       className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
     >
+      {showLoadOlderHistory ? (
+        <div className="mb-4 flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onLoadOlderHistory}
+            disabled={isLoadingOlderHistory || !onLoadOlderHistory}
+            className="h-8 rounded-md px-3 text-xs"
+          >
+            {isLoadingOlderHistory ? "Loading older history..." : "Load older history"}
+          </Button>
+        </div>
+      ) : null}
       {virtualizedRowCount > 0 && (
         <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
           {virtualRows.map((virtualRow: VirtualItem) => {
