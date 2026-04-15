@@ -216,6 +216,11 @@ body::after {
   background-size: 256px 256px;
 }
 
+.project-themed-composer[data-project-theme="true"]:focus-within {
+  border-color: var(--project-accent-color);
+  box-shadow: 0 0 0 3px var(--project-accent-ring);
+}
+
 pre,
 code,
 textarea,

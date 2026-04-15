@@ -397,6 +397,7 @@ describe("incremental orchestration updates", () => {
         projectId: recreatedProjectId,
         title: "Project Recreated",
         emoji: null,
+        color: "#4F46E5",
         groupName: null,
         groupEmoji: null,
         workspaceRoot: "/tmp/project",
@@ -414,9 +415,10 @@ describe("incremental orchestration updates", () => {
     expect(next.projects[0]?.id).toBe(recreatedProjectId);
     expect(next.projects[0]?.cwd).toBe("/tmp/project");
     expect(next.projects[0]?.name).toBe("Project Recreated");
+    expect(next.projects[0]?.color).toBe("#4F46E5");
   });
 
-  it("applies project.meta-updated emoji and folder changes", () => {
+  it("applies project.meta-updated emoji, color, and folder changes", () => {
     const state = makeState(makeThread());
 
     const next = applyOrchestrationEvent(
@@ -424,12 +426,14 @@ describe("incremental orchestration updates", () => {
       makeEvent("project.meta-updated", {
         projectId: ProjectId.makeUnsafe("project-1"),
         emoji: "🧪",
+        color: "#0EA5E9",
         groupName: "Experiments",
         updatedAt: "2026-02-27T00:00:01.000Z",
       }),
     );
 
     expect(next.projects[0]?.emoji).toBe("🧪");
+    expect(next.projects[0]?.color).toBe("#0EA5E9");
     expect(next.projects[0]?.groupName).toBe("Experiments");
     expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:01.000Z");
   });

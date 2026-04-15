@@ -4,6 +4,7 @@ import { useCallback } from "react";
 
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import { buildProjectThemeStyle } from "../projectTheme";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import {
@@ -48,6 +49,7 @@ export default function BranchToolbar({
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
   const hasServerThread = serverThread !== undefined;
+  const projectThemeStyle = buildProjectThemeStyle(activeProject?.color ?? null);
   const effectiveEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,
     hasServerThread,
@@ -110,50 +112,70 @@ export default function BranchToolbar({
 
   return (
     <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pt-1 pb-3 max-md:hidden">
-      {envLocked || activeWorktreePath ? (
-        <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-          {activeWorktreePath ? (
-            <>
-              <GitForkIcon className="size-3" />
-              Worktree
-            </>
-          ) : (
-            <>
-              <FolderIcon className="size-3" />
-              Local
-            </>
-          )}
-        </span>
-      ) : (
-        <Select
-          value={effectiveEnvMode}
-          onValueChange={(value) => onEnvModeChange(value as EnvMode)}
-          items={envModeItems}
-        >
-          <SelectTrigger variant="ghost" size="xs" className="font-medium">
-            {effectiveEnvMode === "worktree" ? (
-              <GitForkIcon className="size-3" />
+      <div className="flex items-center gap-2.5">
+        {envLocked || activeWorktreePath ? (
+          <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+            {activeWorktreePath ? (
+              <>
+                <GitForkIcon className="size-3" />
+                Worktree
+              </>
             ) : (
-              <FolderIcon className="size-3" />
-            )}
-            <SelectValue />
-          </SelectTrigger>
-          <SelectPopup>
-            <SelectItem value="local">
-              <span className="inline-flex items-center gap-1.5">
+              <>
                 <FolderIcon className="size-3" />
                 Local
-              </span>
-            </SelectItem>
-            <SelectItem value="worktree">
-              <span className="inline-flex items-center gap-1.5">
+              </>
+            )}
+          </span>
+        ) : (
+          <Select
+            value={effectiveEnvMode}
+            onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+            items={envModeItems}
+          >
+            <SelectTrigger variant="ghost" size="xs" className="font-medium">
+              {effectiveEnvMode === "worktree" ? (
                 <GitForkIcon className="size-3" />
-                New worktree
-              </span>
-            </SelectItem>
-          </SelectPopup>
-        </Select>
-      )}
+              ) : (
+                <FolderIcon className="size-3" />
+              )}
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="local">
+                <span className="inline-flex items-center gap-1.5">
+                  <FolderIcon className="size-3" />
+                  Local
+                </span>
+              </SelectItem>
+              <SelectItem value="worktree">
+                <span className="inline-flex items-center gap-1.5">
+                  <GitForkIcon className="size-3" />
+                  New worktree
+                </span>
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        )}
+        {activeProject.emoji ? (
+          <span
+            className="inline-flex h-7 items-center rounded-full border px-2.5 text-sm leading-none shadow-sm"
+            style={
+              projectThemeStyle
+                ? {
+                    ...projectThemeStyle,
+                    borderColor: "var(--project-accent-border)",
+                    backgroundColor: "var(--project-accent-background)",
+                  }
+                : undefined
+            }
+            title={activeProject.name}
+            aria-label={`${activeProject.name} emoji`}
+          >
+            {activeProject.emoji}
+          </span>
+        ) : null}
+      </div>
 
       <BranchToolbarBranchSelector
         activeProjectCwd={activeProject.cwd}

@@ -30,6 +30,7 @@ const readModel: OrchestrationReadModel = {
       id: projectId,
       title: "Workspace",
       emoji: null,
+      color: null,
       groupName: null,
       groupEmoji: null,
       workspaceRoot: "/tmp/t3code",
@@ -70,13 +71,15 @@ const readModel: OrchestrationReadModel = {
   ],
 };
 
+type ThreadMessageSentEvent = Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+
 const makeMessageEvent = (input: {
   readonly role: "assistant" | "user";
   readonly streaming: boolean;
   readonly text: string;
   readonly turnId?: TurnId;
   readonly messageId?: MessageId;
-}): OrchestrationEvent => ({
+}): ThreadMessageSentEvent => ({
   sequence: 2,
   eventId: EventId.makeUnsafe(`evt-${input.role}-${input.streaming ? "streaming" : "done"}`),
   aggregateKind: "thread",

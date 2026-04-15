@@ -27,6 +27,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         projectId: ProjectId.makeUnsafe("project-null-options"),
         title: "Null options project",
         emoji: null,
+        color: null,
         groupName: null,
         groupEmoji: null,
         workspaceRoot: "/tmp/project-null-options",

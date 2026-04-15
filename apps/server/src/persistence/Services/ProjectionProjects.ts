@@ -16,6 +16,7 @@ export const ProjectionProject = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
   emoji: Schema.NullOr(Schema.String),
+  color: Schema.NullOr(Schema.String),
   groupName: Schema.NullOr(Schema.String),
   groupEmoji: Schema.NullOr(Schema.String),
   workspaceRoot: Schema.String,

@@ -35,6 +35,7 @@ import Migration0019 from "./Migrations/019_ProjectionSnapshotLookupIndexes.ts";
 import Migration0020 from "./Migrations/020_ProjectDisplayMetadata.ts";
 import Migration0021 from "./Migrations/021_ProjectGroupEmoji.ts";
 import Migration0022 from "./Migrations/022_PushSubscriptions.ts";
+import Migration0023 from "./Migrations/023_ProjectAccentColor.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -69,6 +70,7 @@ export const migrationEntries = [
   [20, "ProjectDisplayMetadata", Migration0020],
   [21, "ProjectGroupEmoji", Migration0021],
   [22, "PushSubscriptions", Migration0022],
+  [23, "ProjectAccentColor", Migration0023],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

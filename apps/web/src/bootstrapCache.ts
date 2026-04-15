@@ -50,6 +50,7 @@ const BootstrapProjectSchema = Schema.Struct({
   id: ProjectId,
   name: Schema.String,
   emoji: Schema.NullOr(Schema.String),
+  color: Schema.optional(Schema.NullOr(Schema.String)),
   groupName: Schema.NullOr(Schema.String),
   groupEmoji: Schema.NullOr(Schema.String),
   cwd: Schema.String,
@@ -91,7 +92,50 @@ const BootstrapCacheSchema = Schema.Struct({
   shellState: Schema.NullOr(ShellBootstrapStateSchema),
 });
 
-export type BootstrapCache = typeof BootstrapCacheSchema.Type;
+type ShellBootstrapStateFromCache = typeof ShellBootstrapStateSchema.Type;
+type BootstrapCacheFromStorage = typeof BootstrapCacheSchema.Type;
+
+export interface BootstrapCache {
+  updatedAt: string;
+  serverConfig: ServerConfigData | null;
+  shellState: ShellBootstrapState | null;
+}
+
+function normalizeShellBootstrapState(shellState: ShellBootstrapStateFromCache): ShellBootstrapState {
+  return {
+    projects: shellState.projects.map((project) => ({
+      ...project,
+      color: project.color ?? null,
+      scripts: project.scripts.map((script) => ({ ...script })),
+    })),
+    threads: shellState.threads.map((thread) => ({
+      ...thread,
+      session: thread.session
+        ? {
+            provider: thread.session.provider,
+            status: thread.session.status,
+            createdAt: thread.session.createdAt,
+            updatedAt: thread.session.updatedAt,
+            orchestrationStatus: thread.session.orchestrationStatus,
+            ...(thread.session.activeTurnId !== undefined
+              ? { activeTurnId: thread.session.activeTurnId }
+              : {}),
+            ...(thread.session.lastError !== undefined
+              ? { lastError: thread.session.lastError }
+              : {}),
+          }
+        : null,
+    })),
+  };
+}
+
+function normalizeBootstrapCache(cache: BootstrapCacheFromStorage): BootstrapCache {
+  return {
+    updatedAt: cache.updatedAt,
+    serverConfig: cache.serverConfig,
+    shellState: cache.shellState ? normalizeShellBootstrapState(cache.shellState) : null,
+  };
+}
 
 function clearCorruptBootstrapCache() {
   try {
@@ -125,11 +169,12 @@ export function readBootstrapCache(): BootstrapCache | null {
     if (cache === null) {
       return null;
     }
-    if (!isFresh(cache)) {
+    const normalizedCache = normalizeBootstrapCache(cache);
+    if (!isFresh(normalizedCache)) {
       clearCorruptBootstrapCache();
       return null;
     }
-    return cache;
+    return normalizedCache;
   } catch {
     clearCorruptBootstrapCache();
     return null;

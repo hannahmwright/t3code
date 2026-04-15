@@ -51,6 +51,7 @@ function makeReadModel(): OrchestrationReadModel {
         id: ProjectId.makeUnsafe("project-1"),
         title: "Workspace",
         emoji: null,
+        color: null,
         groupName: null,
         groupEmoji: null,
         workspaceRoot: "/tmp/workspace",
@@ -132,20 +133,30 @@ describe("bootstrapCache", () => {
 
   it("persists shell state when a thread session has no active turn", () => {
     const readModel = makeReadModel();
-    readModel.threads[0] = {
-      ...readModel.threads[0],
-      session: {
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        status: "ready",
-        providerName: "codex",
-        runtimeMode: "full-access",
-        activeTurnId: null,
-        lastError: null,
-        updatedAt: "2026-04-10T11:12:00.000Z",
-      },
+    const firstThread = readModel.threads[0];
+    expect(firstThread).toBeDefined();
+    if (!firstThread) {
+      throw new Error("Missing bootstrap thread fixture");
+    }
+    const nextReadModel: OrchestrationReadModel = {
+      ...readModel,
+      threads: [
+        {
+          ...firstThread,
+          session: {
+            threadId: ThreadId.makeUnsafe("thread-1"),
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-04-10T11:12:00.000Z",
+          },
+        },
+      ],
     };
 
-    persistReadModelToBootstrapCache(readModel);
+    persistReadModelToBootstrapCache(nextReadModel);
 
     expect(readBootstrapCache()?.shellState?.threads[0]?.session).toMatchObject({
       provider: "codex",

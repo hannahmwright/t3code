@@ -183,6 +183,7 @@ export function projectEvent(
             id: payload.projectId,
             title: payload.title,
             emoji: payload.emoji,
+            color: payload.color,
             groupName: payload.groupName,
             groupEmoji: payload.groupEmoji ?? null,
             workspaceRoot: payload.workspaceRoot,
@@ -214,6 +215,7 @@ export function projectEvent(
                   ...project,
                   ...(payload.title !== undefined ? { title: payload.title } : {}),
                   ...(payload.emoji !== undefined ? { emoji: payload.emoji } : {}),
+                  ...(payload.color !== undefined ? { color: payload.color } : {}),
                   ...(payload.groupName !== undefined ? { groupName: payload.groupName } : {}),
                   ...(payload.groupEmoji !== undefined ? { groupEmoji: payload.groupEmoji } : {}),
                   ...(payload.workspaceRoot !== undefined

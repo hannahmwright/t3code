@@ -75,6 +75,7 @@ import { useGitStatus } from "../lib/gitStatusState";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { buildProjectThemeStyle, normalizeProjectAccentColor } from "../projectTheme";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { toastManager } from "./ui/toast";
@@ -205,6 +206,7 @@ interface ProjectEditDraft {
   projectId: ProjectId;
   name: string;
   emoji: string;
+  color: string;
   groupName: string;
 }
 
@@ -239,6 +241,8 @@ interface PrStatusIndicator {
   tooltip: string;
   url: string;
 }
+
+const PROJECT_COLOR_PICKER_FALLBACK = "#4F46E5";
 
 type ThreadPr = GitStatusResult["pr"];
 
@@ -337,6 +341,7 @@ function resolveThreadPr(
 interface SidebarThreadRowProps {
   threadId: ThreadId;
   projectCwd: string | null;
+  projectColor: string | null;
   orderedProjectThreadIds: readonly ThreadId[];
   routeThreadId: ThreadId | null;
   selectedThreadIds: ReadonlySet<ThreadId>;
@@ -405,6 +410,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
     : !isThreadRunning
       ? "pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
       : "pointer-events-none";
+  const projectThemeStyle = buildProjectThemeStyle(props.projectColor);
 
   return (
     <SidebarMenuSubItem
@@ -512,7 +518,17 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
             />
           ) : (
             <div className="flex min-w-0 flex-1 items-center gap-2.5 md:gap-1.5">
-              <span className="min-w-0 flex-1 truncate text-[15px] md:text-xs">
+              <span
+                className="min-w-0 flex-1 truncate text-[15px] md:text-xs"
+                style={
+                  projectThemeStyle
+                    ? {
+                        ...projectThemeStyle,
+                        color: "var(--project-accent-text)",
+                      }
+                    : undefined
+                }
+              >
                 {renderHighlightedMatch(thread.title, props.searchMatch?.titleMatch ?? null)}
               </span>
               {isArchived ? (
@@ -1293,6 +1309,7 @@ export default function Sidebar() {
       projectId: project.id,
       name: project.name,
       emoji: project.emoji ?? "",
+      color: project.color ?? "",
       groupName: project.groupName ?? "",
     });
   }, []);
@@ -1303,6 +1320,7 @@ export default function Sidebar() {
       patch: {
         title?: string;
         emoji?: string | null;
+        color?: string | null;
         groupName?: string | null;
         groupEmoji?: string | null;
       },
@@ -1352,8 +1370,20 @@ export default function Sidebar() {
 
     const nextName = editingProject.name.trim();
     const nextEmoji = editingProject.emoji.trim();
+    const nextColorValue = editingProject.color.trim();
     const nextGroupName = editingProject.groupName.trim();
     const nextGroupEmoji = resolveWorkspaceEmojiByName(nextGroupName);
+
+    if (nextColorValue.length > 0 && normalizeProjectAccentColor(nextColorValue) === null) {
+      toastManager.add({
+        type: "warning",
+        title: "Enter a valid color",
+        description: "Use a 6-digit hex color like #4F46E5.",
+      });
+      return;
+    }
+
+    const nextColor = normalizeProjectAccentColor(nextColorValue);
 
     if (nextName.length === 0) {
       toastManager.add({
@@ -1366,6 +1396,7 @@ export default function Sidebar() {
     const patch: {
       title?: string;
       emoji?: string | null;
+      color?: string | null;
       groupName?: string | null;
       groupEmoji?: string | null;
     } = {};
@@ -1375,6 +1406,9 @@ export default function Sidebar() {
     }
     if (nextEmoji !== (project.emoji ?? "")) {
       patch.emoji = nextEmoji.length > 0 ? nextEmoji : null;
+    }
+    if (nextColor !== (project.color ?? null)) {
+      patch.color = nextColor;
     }
     if (
       nextGroupName !== (project.groupName ?? "") ||
@@ -1771,13 +1805,14 @@ export default function Sidebar() {
       const clicked = await api.contextMenu.show(
         [
           { id: "edit", label: "Edit project" },
+          { id: "assign-color", label: project.color ? "Edit color..." : "Assign color..." },
           { id: "pin", label: pinnedProjectIdSet.has(project.id) ? "Unpin project" : "Pin project" },
           { id: "copy-path", label: "Copy Project Path" },
           { id: "delete", label: "Remove project", destructive: true },
         ],
         position,
       );
-      if (clicked === "edit") {
+      if (clicked === "edit" || clicked === "assign-color") {
         openProjectEditor(project);
         return;
       }
@@ -2508,6 +2543,7 @@ export default function Sidebar() {
                 key={threadId}
                 threadId={threadId}
                 projectCwd={project.cwd}
+                projectColor={project.color ?? null}
                 orderedProjectThreadIds={orderedProjectThreadIds}
                 routeThreadId={routeThreadId}
                 selectedThreadIds={selectedThreadIds}
@@ -3275,6 +3311,48 @@ export default function Sidebar() {
                 maxLength={16}
               />
               <FieldDescription>Optional. Shown before the project name.</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel>Color</FieldLabel>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  aria-label="Project color"
+                  className="h-9 w-11 shrink-0 cursor-pointer rounded-md border border-border bg-background p-1"
+                  value={
+                    normalizeProjectAccentColor(editingProject?.color ?? "") ??
+                    PROJECT_COLOR_PICKER_FALLBACK
+                  }
+                  onChange={(event) =>
+                    setEditingProject((current) =>
+                      current ? { ...current, color: event.target.value.toUpperCase() } : current,
+                    )
+                  }
+                />
+                <Input
+                  value={editingProject?.color ?? ""}
+                  onChange={(event) =>
+                    setEditingProject((current) =>
+                      current ? { ...current, color: event.target.value } : current,
+                    )
+                  }
+                  placeholder="#4F46E5"
+                  maxLength={7}
+                />
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() =>
+                    setEditingProject((current) => (current ? { ...current, color: "" } : current))
+                  }
+                >
+                  Clear
+                </Button>
+              </div>
+              <FieldDescription>
+                Optional. Used for chat background tint, sidebar thread titles, and the composer
+                focus border.
+              </FieldDescription>
             </Field>
             <Field>
               <FieldLabel>Workspace</FieldLabel>

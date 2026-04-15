@@ -234,6 +234,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           emoji: null,
+          color: null,
           groupName: null,
           groupEmoji: null,
           workspaceRoot: "/tmp/project-1",

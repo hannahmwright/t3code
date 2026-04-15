@@ -24,8 +24,9 @@ const cachedBootstrap = readBootstrapCache();
 if (cachedBootstrap?.serverConfig) {
   setServerConfigSnapshot(cachedBootstrap.serverConfig);
 }
-if (cachedBootstrap?.shellState) {
-  useStore.setState((state) => hydrateShellBootstrapState(state, cachedBootstrap.shellState));
+const cachedShellState = cachedBootstrap?.shellState;
+if (cachedShellState) {
+  useStore.setState((state) => hydrateShellBootstrapState(state, cachedShellState));
 }
 
 const history = isElectron || shouldUseHashRouting() ? createHashHistory() : createBrowserHistory();

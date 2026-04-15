@@ -382,6 +382,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             projectId: event.payload.projectId,
             title: event.payload.title,
             emoji: event.payload.emoji,
+            color: event.payload.color ?? null,
             groupName: event.payload.groupName,
             groupEmoji: event.payload.groupEmoji ?? null,
             workspaceRoot: event.payload.workspaceRoot,
@@ -404,6 +405,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.emoji !== undefined ? { emoji: event.payload.emoji } : {}),
+            ...(event.payload.color !== undefined ? { color: event.payload.color } : {}),
             ...(event.payload.groupName !== undefined
               ? { groupName: event.payload.groupName }
               : {}),

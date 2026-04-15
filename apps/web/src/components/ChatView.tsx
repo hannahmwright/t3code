@@ -88,6 +88,7 @@ import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useIsMobile } from "../hooks/useMediaQuery";
+import { buildProjectThemeStyle } from "../projectTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -892,6 +893,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, existingOpenTerminalThreadIds, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const activeProjectThemeStyle = buildProjectThemeStyle(activeProject?.color ?? null);
   const openSettings = useCallback(() => {
     void navigate({ to: "/settings" });
   }, [navigate]);
@@ -3998,7 +4000,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background max-md:min-h-[var(--app-shell-height)]">
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background max-md:min-h-[var(--app-shell-height)]"
+      style={
+        activeProjectThemeStyle
+          ? {
+              ...activeProjectThemeStyle,
+              backgroundColor: "var(--project-accent-background)",
+            }
+          : undefined
+      }
+    >
       {/* Top bar */}
       <header
         ref={mobileHeaderRef}
@@ -4142,11 +4154,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
               >
                 <div
                   className={cn(
-                    "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
+                    "project-themed-composer rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
                     isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
                     "max-md:rounded-[24px] max-md:shadow-[0_18px_40px_color-mix(in_srgb,var(--color-black)_10%,transparent)]",
                     composerProviderState.composerSurfaceClassName,
                   )}
+                  data-project-theme={activeProjectThemeStyle ? "true" : undefined}
+                  style={
+                    activeProjectThemeStyle
+                      ? {
+                          ...activeProjectThemeStyle,
+                          borderColor: "var(--project-accent-border)",
+                          backgroundColor: "var(--project-accent-background-strong)",
+                        }
+                      : undefined
+                  }
                 >
                   {activePendingApproval ? (
                     <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">

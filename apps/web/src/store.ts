@@ -3,7 +3,10 @@ import {
   type OrchestrationMessage,
   type OrchestrationProposedPlan,
   type ProjectId,
+  type ModelSelection,
+  type ProviderInteractionMode,
   type ProviderKind,
+  type RuntimeMode,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSession,
@@ -54,8 +57,8 @@ export interface ShellBootstrapThread {
 }
 
 export interface ShellBootstrapState {
-  projects: Project[];
-  threads: ShellBootstrapThread[];
+  projects: ReadonlyArray<Project>;
+  threads: ReadonlyArray<ShellBootstrapThread>;
 }
 
 const initialState: AppState = {
@@ -219,6 +222,7 @@ function mapProject(project: OrchestrationReadModel["projects"][number]): Projec
     id: project.id,
     name: project.title,
     emoji: project.emoji,
+    color: project.color ?? null,
     groupName: project.groupName,
     groupEmoji: project.groupEmoji ?? null,
     cwd: project.workspaceRoot,
@@ -743,6 +747,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         id: event.payload.projectId,
         title: event.payload.title,
         emoji: event.payload.emoji,
+        color: event.payload.color ?? null,
         groupName: event.payload.groupName,
         groupEmoji: event.payload.groupEmoji ?? null,
         workspaceRoot: event.payload.workspaceRoot,
@@ -766,6 +771,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         ...project,
         ...(event.payload.title !== undefined ? { name: event.payload.title } : {}),
         ...(event.payload.emoji !== undefined ? { emoji: event.payload.emoji } : {}),
+        ...(event.payload.color !== undefined ? { color: event.payload.color } : {}),
         ...(event.payload.groupName !== undefined ? { groupName: event.payload.groupName } : {}),
         ...(event.payload.groupEmoji !== undefined ? { groupEmoji: event.payload.groupEmoji } : {}),
         ...(event.payload.workspaceRoot !== undefined ? { cwd: event.payload.workspaceRoot } : {}),

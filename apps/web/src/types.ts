@@ -82,6 +82,7 @@ export interface Project {
   id: ProjectId;
   name: string;
   emoji: string | null;
+  color?: string | null;
   groupName: string | null;
   groupEmoji: string | null;
   cwd: string;

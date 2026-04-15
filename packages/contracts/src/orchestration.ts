@@ -137,10 +137,16 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const ProjectAccentColor = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^#[0-9a-fA-F]{6}$/),
+);
+export type ProjectAccentColor = typeof ProjectAccentColor.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
   groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(() => null),
   ),
@@ -309,6 +315,7 @@ export const ProjectCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
   groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: TrimmedNonEmptyString,
@@ -322,6 +329,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
   groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
@@ -658,6 +666,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
   groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(() => null),
   ),
@@ -673,6 +682,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
   groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
