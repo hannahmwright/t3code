@@ -411,6 +411,14 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
       ? "pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
       : "pointer-events-none";
   const projectThemeStyle = buildProjectThemeStyle(props.projectColor);
+  const activeProjectRowStyle =
+    isActive && projectThemeStyle
+      ? {
+          ...projectThemeStyle,
+          backgroundColor: "var(--project-accent-background-strong)",
+          boxShadow: "inset 2px 0 0 var(--project-accent-color)",
+        }
+      : undefined;
 
   return (
     <SidebarMenuSubItem
@@ -438,6 +446,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
           isActive,
           isSelected,
         })} ${isArchived ? "opacity-80" : ""} relative isolate`}
+        style={activeProjectRowStyle}
         onClick={(event) => {
           props.handleThreadClick(event, thread.id, props.orderedProjectThreadIds);
         }}
@@ -518,17 +527,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
             />
           ) : (
             <div className="flex min-w-0 flex-1 items-center gap-2.5 md:gap-1.5">
-              <span
-                className="min-w-0 flex-1 truncate text-[15px] md:text-xs"
-                style={
-                  projectThemeStyle
-                    ? {
-                        ...projectThemeStyle,
-                        color: "var(--project-accent-text)",
-                      }
-                    : undefined
-                }
-              >
+              <span className="min-w-0 flex-1 truncate text-[15px] md:text-xs">
                 {renderHighlightedMatch(thread.title, props.searchMatch?.titleMatch ?? null)}
               </span>
               {isArchived ? (
