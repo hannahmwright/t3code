@@ -555,6 +555,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const repoRoot = yield* RepoRoot;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
+  const afterPackHookPath = path.join(repoRoot, "scripts/electron-builder-after-pack.cjs");
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -663,7 +664,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",
-    main: "apps/desktop/dist-electron/main.js",
+    main: "apps/desktop/dist-electron/bootstrap.js",
     build: yield* createBuildConfig(
       options.platform,
       options.target,
@@ -686,6 +687,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     },
     packageManager: rootPackageJson.packageManager,
   };
+  if (options.platform === "mac") {
+    stagePackageJson.build = {
+      ...stagePackageJson.build,
+      afterPack: afterPackHookPath,
+    };
+  }
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);

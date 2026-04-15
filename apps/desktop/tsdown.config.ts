@@ -10,6 +10,11 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
+    entry: ["src/bootstrap.ts"],
+    clean: true,
+  },
+  {
+    ...shared,
     entry: ["src/main.ts"],
     clean: true,
     noExternal: (id) => id.startsWith("@t3tools/"),
