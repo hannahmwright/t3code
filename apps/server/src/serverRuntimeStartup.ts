@@ -15,6 +15,7 @@ import {
   Path,
   Queue,
   Ref,
+  Schema,
   Scope,
   ServiceMap,
 } from "effect";
@@ -23,6 +24,7 @@ import { ServerConfig } from "./config";
 import { Keybindings } from "./keybindings";
 import { Open } from "./open";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
+import { OrchestrationCommandInvariantError } from "./orchestration/Errors.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
@@ -34,6 +36,14 @@ const isWildcardHost = (host: string | undefined): boolean =>
 
 const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+
+const isDuplicateCreateInvariant = (
+  error: unknown,
+  commandType: "project.create" | "thread.create",
+): error is OrchestrationCommandInvariantError =>
+  Schema.is(OrchestrationCommandInvariantError)(error) &&
+  error.commandType === commandType &&
+  error.detail.includes("already exists");
 
 export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
   readonly message: string;
@@ -195,21 +205,31 @@ const autoBootstrapWelcome = Effect.gen(function* () {
       if (Option.isNone(existingThreadId)) {
         const createdAt = new Date().toISOString();
         const createdThreadId = ThreadId.makeUnsafe(crypto.randomUUID());
-        yield* orchestrationEngine.dispatch({
-          type: "thread.create",
-          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
-          threadId: createdThreadId,
-          projectId: nextProjectId,
-          title: "New thread",
-          modelSelection: nextProjectDefaultModelSelection,
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "full-access",
-          branch: null,
-          worktreePath: null,
-          createdAt,
-        });
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            threadId: createdThreadId,
+            projectId: nextProjectId,
+            title: "New thread",
+            modelSelection: nextProjectDefaultModelSelection,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          })
+          .pipe(
+            Effect.catch((error) =>
+              isDuplicateCreateInvariant(error, "thread.create")
+                ? Effect.void
+                : Effect.fail(error),
+            ),
+          );
+        const refreshedThreadId =
+          yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
         bootstrapProjectId = nextProjectId;
-        bootstrapThreadId = createdThreadId;
+        bootstrapThreadId = Option.getOrUndefined(refreshedThreadId) ?? createdThreadId;
       } else {
         bootstrapProjectId = nextProjectId;
         bootstrapThreadId = existingThreadId.value;
