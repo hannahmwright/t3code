@@ -6,6 +6,8 @@ import { defineConfig } from "vite";
 import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
+const wsUrl = process.env.VITE_WS_URL?.trim();
+const serverPort = Number(process.env.T3CODE_PORT ?? "");
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
 const buildSourcemap =
@@ -14,6 +16,26 @@ const buildSourcemap =
     : sourcemapEnv === "hidden"
       ? "hidden"
       : true;
+
+function resolveProxyTarget(): string | undefined {
+  if (wsUrl) {
+    try {
+      const parsed = new URL(wsUrl);
+      parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+      return parsed.origin;
+    } catch {
+      // Ignore malformed dev URLs and fall back to the explicit server port.
+    }
+  }
+
+  if (Number.isFinite(serverPort) && serverPort > 0) {
+    return `http://localhost:${serverPort}`;
+  }
+
+  return undefined;
+}
+
+const proxyTarget = resolveProxyTarget();
 
 export default defineConfig({
   plugins: [
@@ -50,6 +72,18 @@ export default defineConfig({
       protocol: "ws",
       host: "localhost",
     },
+    ...(proxyTarget
+      ? {
+          proxy: {
+            "/api": {
+              target: proxyTarget,
+            },
+            "/attachments": {
+              target: proxyTarget,
+            },
+          },
+        }
+      : {}),
   },
   build: {
     outDir: "dist",
