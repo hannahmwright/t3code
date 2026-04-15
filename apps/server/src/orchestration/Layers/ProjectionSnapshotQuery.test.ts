@@ -235,6 +235,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           title: "Project 1",
           emoji: null,
           groupName: null,
+          groupEmoji: null,
           workspaceRoot: "/tmp/project-1",
           defaultModelSelection: {
             provider: "codex",
@@ -338,6 +339,150 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         },
       ]);
+    }),
+  );
+
+  it.effect("caps per-thread snapshot messages and activities to recent history", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-capped',
+          'Capped Project',
+          '/tmp/project-capped',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-03-03T00:00:00.000Z',
+          '2026-03-03T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-capped',
+          'project-capped',
+          'Capped Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          'turn-capped',
+          '2026-03-03T00:00:00.000Z',
+          '2026-03-03T00:00:00.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        WITH RECURSIVE message_numbers(n) AS (
+          SELECT 1
+          UNION ALL
+          SELECT n + 1 FROM message_numbers WHERE n < 2005
+        )
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          attachments_json,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        SELECT
+          'message-' || printf('%04d', n),
+          'thread-capped',
+          'turn-capped',
+          'assistant',
+          'message ' || n,
+          NULL,
+          0,
+          strftime('%Y-%m-%dT%H:%M:%fZ', '2026-03-03T00:00:00.000Z', '+' || n || ' seconds'),
+          strftime('%Y-%m-%dT%H:%M:%fZ', '2026-03-03T00:00:00.000Z', '+' || n || ' seconds')
+        FROM message_numbers
+      `;
+
+      yield* sql`
+        WITH RECURSIVE activity_numbers(n) AS (
+          SELECT 1
+          UNION ALL
+          SELECT n + 1 FROM activity_numbers WHERE n < 505
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        SELECT
+          'activity-' || printf('%04d', n),
+          'thread-capped',
+          'turn-capped',
+          'info',
+          'runtime.note',
+          'activity ' || n,
+          '{"n":' || n || '}',
+          n,
+          strftime('%Y-%m-%dT%H:%M:%fZ', '2026-03-03T00:00:00.000Z', '+' || n || ' seconds')
+        FROM activity_numbers
+      `;
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const thread = snapshot.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-capped"));
+
+      assert.isDefined(thread);
+      if (!thread) {
+        return;
+      }
+
+      assert.equal(thread.messages.length, 2000);
+      assert.equal(thread.messages[0]?.id, asMessageId("message-0006"));
+      assert.equal(thread.messages.at(-1)?.id, asMessageId("message-2005"));
+
+      assert.equal(thread.activities.length, 100);
+      assert.equal(thread.activities[0]?.id, asEventId("activity-0406"));
+      assert.equal(thread.activities.at(-1)?.id, asEventId("activity-0505"));
     }),
   );
 

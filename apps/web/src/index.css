@@ -47,8 +47,51 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    background-color: var(--background);
+  }
   body {
     @apply bg-background text-foreground relative;
+    background-color: var(--background);
+  }
+}
+
+@keyframes boot-breathe {
+  0%,
+  100% {
+    transform: scale(0.96);
+  }
+
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+@keyframes boot-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  55% {
+    transform: translateX(155%);
+  }
+
+  100% {
+    transform: translateX(155%);
+  }
+}
+
+@keyframes boot-dot {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.45;
+  }
+
+  40% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
@@ -63,6 +106,7 @@
 
 :root {
   color-scheme: light;
+  --app-shell-height: 100vh;
   --radius: 0.625rem;
   --background: var(--color-white);
   --foreground: var(--color-neutral-800);
@@ -120,6 +164,12 @@
   }
 }
 
+@supports (height: 100svh) {
+  :root {
+    --app-shell-height: 100svh;
+  }
+}
+
 body {
   font-family:
     "DM Sans",
@@ -130,7 +180,7 @@ body {
     sans-serif;
   margin: 0;
   padding: 0;
-  min-height: 100vh;
+  min-height: var(--app-shell-height);
 }
 
 html,
@@ -139,10 +189,20 @@ body,
   height: 100%;
   width: 100%;
   max-width: 100%;
-  overflow-y: hidden;
   overflow-x: hidden;
   overflow-x: clip;
   overscroll-behavior-y: none;
+}
+
+@media (max-width: 767px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: auto;
+  }
 }
 
 body::after {

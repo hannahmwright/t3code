@@ -7,6 +7,7 @@ import {
   enablePushOnThisDevice,
   getNotificationPermissionState,
   getOrCreateInstallationId,
+  syncExistingPushSubscription,
   type BrowserNotificationPermissionState,
   supportsWebPushNotifications,
 } from "../notifications";
@@ -17,6 +18,7 @@ export function useWebNotifications() {
   const nativeApi = useMemo(() => ensureNativeApi(), []);
   const installationId = useMemo(() => getOrCreateInstallationId(), []);
   const installState = usePwaInstallState();
+  const supportsBrowserPush = supportsWebPushNotifications();
   const [permission, setPermission] = useState<BrowserNotificationPermissionState>(() =>
     getNotificationPermissionState(),
   );
@@ -45,6 +47,43 @@ export function useWebNotifications() {
     queryFn: () => nativeApi.server.getNotificationsState({ installationId }),
     enabled: !isElectron,
   });
+
+  useEffect(() => {
+    if (
+      isElectron ||
+      permission !== "granted" ||
+      !supportsBrowserPush ||
+      notificationsQuery.isLoading ||
+      notificationsQuery.data?.supported === false ||
+      notificationsQuery.data?.subscribed === true
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void syncExistingPushSubscription({
+      nativeApi,
+      installationId,
+    })
+      .then((synced) => {
+        if (!synced || cancelled) {
+          return;
+        }
+        void notificationsQuery.refetch();
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    installationId,
+    nativeApi,
+    notificationsQuery,
+    permission,
+    supportsBrowserPush,
+  ]);
 
   const enable = async () => {
     if (!notificationsQuery.data?.vapidPublicKey) {
@@ -79,7 +118,7 @@ export function useWebNotifications() {
     installationId,
     installState,
     permission,
-    supportsBrowserPush: supportsWebPushNotifications(),
+    supportsBrowserPush,
     isSaving,
     query: notificationsQuery,
     enable,

@@ -123,6 +123,11 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
 ] as const;
 
+// Keep the initial snapshot lean so the PWA can bootstrap quickly. The client
+// can still retain a deeper rolling window from live updates after hydration.
+const SNAPSHOT_THREAD_MESSAGE_LIMIT = 2_000;
+const SNAPSHOT_THREAD_ACTIVITY_LIMIT = 100;
+
 function maxIso(left: string | null, right: string): string {
   if (left === null) {
     return right;
@@ -225,7 +230,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
-        FROM projection_thread_messages
+        FROM (
+          SELECT
+            message_id,
+            thread_id,
+            turn_id,
+            role,
+            text,
+            attachments_json,
+            is_streaming,
+            created_at,
+            updated_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY created_at DESC, message_id DESC
+            ) AS snapshot_rank
+          FROM projection_thread_messages
+        )
+        WHERE snapshot_rank <= ${SNAPSHOT_THREAD_MESSAGE_LIMIT}
         ORDER BY thread_id ASC, created_at ASC, message_id ASC
       `,
   });
@@ -264,7 +286,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           payload_json AS "payload",
           sequence,
           created_at AS "createdAt"
-        FROM projection_thread_activities
+        FROM (
+          SELECT
+            activity_id,
+            thread_id,
+            turn_id,
+            tone,
+            kind,
+            summary,
+            payload_json,
+            sequence,
+            created_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY
+                CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+                sequence DESC,
+                created_at DESC,
+                activity_id DESC
+            ) AS snapshot_rank
+          FROM projection_thread_activities
+        )
+        WHERE snapshot_rank <= ${SNAPSHOT_THREAD_ACTIVITY_LIMIT}
         ORDER BY
           thread_id ASC,
           CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,

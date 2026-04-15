@@ -63,6 +63,22 @@ const authTokenFlag = Flag.string("auth-token").pipe(
   Flag.withAlias("token"),
   Flag.optional,
 );
+const appAuthUsernameFlag = Flag.string("app-auth-username").pipe(
+  Flag.withDescription("Username for built-in web/PWA authentication."),
+  Flag.optional,
+);
+const appAuthPasswordFlag = Flag.string("app-auth-password").pipe(
+  Flag.withDescription("Password for built-in web/PWA authentication."),
+  Flag.optional,
+);
+const appAuthSessionSecretFlag = Flag.string("app-auth-session-secret").pipe(
+  Flag.withDescription("Secret used to sign built-in web/PWA sessions."),
+  Flag.optional,
+);
+const appAuthSessionTtlDaysFlag = Flag.integer("app-auth-session-ttl-days").pipe(
+  Flag.withDescription("How many days trusted built-in app sessions should last."),
+  Flag.optional,
+);
 const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
   Flag.withSchema(Schema.Int),
   Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
@@ -133,6 +149,22 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  appAuthUsername: Config.string("T3CODE_APP_AUTH_USERNAME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  appAuthPassword: Config.string("T3CODE_APP_AUTH_PASSWORD").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  appAuthSessionSecret: Config.string("T3CODE_APP_AUTH_SESSION_SECRET").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  appAuthSessionTtlDays: Config.int("T3CODE_APP_AUTH_SESSION_TTL_DAYS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   bootstrapFd: Config.int("T3CODE_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -156,6 +188,10 @@ interface CliServerFlags {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
+  readonly appAuthUsername?: Option.Option<string>;
+  readonly appAuthPassword?: Option.Option<string>;
+  readonly appAuthSessionSecret?: Option.Option<string>;
+  readonly appAuthSessionTtlDays?: Option.Option<number>;
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
@@ -269,6 +305,32 @@ export const resolveServerConfig = (
         ),
       ),
     );
+    const appAuthUsername = Option.getOrUndefined(
+      resolveOptionPrecedence(
+        flags.appAuthUsername ?? Option.none(),
+        Option.fromUndefinedOr(env.appAuthUsername),
+      ),
+    );
+    const appAuthPassword = Option.getOrUndefined(
+      resolveOptionPrecedence(
+        flags.appAuthPassword ?? Option.none(),
+        Option.fromUndefinedOr(env.appAuthPassword),
+      ),
+    );
+    const appAuthSessionSecret = Option.getOrUndefined(
+      resolveOptionPrecedence(
+        flags.appAuthSessionSecret ?? Option.none(),
+        Option.fromUndefinedOr(env.appAuthSessionSecret),
+      ),
+    );
+    const appAuthSessionTtlDays = Option.getOrElse(
+      resolveOptionPrecedence(
+        flags.appAuthSessionTtlDays ?? Option.none(),
+        Option.fromUndefinedOr(env.appAuthSessionTtlDays),
+      ),
+      () => 30,
+    );
+    const appAuthEnabled = Boolean(appAuthUsername && appAuthPassword);
     const autoBootstrapProjectFromCwd = resolveBooleanFlag(
       flags.autoBootstrapProjectFromCwd,
       Option.getOrElse(
@@ -332,6 +394,11 @@ export const resolveServerConfig = (
       vapidPublicKey: env.vapidPublicKey,
       vapidPrivateKey: env.vapidPrivateKey,
       vapidSubject: env.vapidSubject,
+      appAuthEnabled,
+      appAuthUsername,
+      appAuthPassword,
+      appAuthSessionSecret,
+      appAuthSessionTtlDays,
       mode,
       port,
       cwd,
@@ -364,6 +431,10 @@ const commandFlags = {
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
   authToken: authTokenFlag,
+  appAuthUsername: appAuthUsernameFlag,
+  appAuthPassword: appAuthPasswordFlag,
+  appAuthSessionSecret: appAuthSessionSecretFlag,
+  appAuthSessionTtlDays: appAuthSessionTtlDaysFlag,
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,

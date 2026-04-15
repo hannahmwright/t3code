@@ -179,9 +179,11 @@ interface StagePackageJson {
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
+  readonly overrides: Record<string, unknown>;
   readonly devDependencies: {
     readonly electron: string;
   };
+  readonly packageManager: string;
 }
 
 const AzureTrustedSigningOptionsConfig = Config.all({
@@ -671,12 +673,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.mockUpdateServerPort,
     ),
     dependencies: {
+      "@effect/platform-node-shared": rootPackageJson.workspaces.catalog["@effect/platform-node"],
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
+    },
+    overrides: {
+      ...(rootPackageJson.overrides ?? {}),
+      ...rootPackageJson.workspaces.catalog,
     },
     devDependencies: {
       electron: electronVersion,
     },
+    packageManager: rootPackageJson.packageManager,
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);

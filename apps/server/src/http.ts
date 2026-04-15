@@ -17,6 +17,15 @@ import {
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
 import { resolveAttachmentPathById } from "./attachmentStore";
+import {
+  clearAppAuthCookie,
+  createAppAuthSessionToken,
+  isAppAuthEnabled,
+  isSameOriginRequest,
+  readAppAuthSession,
+  verifyAppAuthCredentials,
+  withAppAuthCookie,
+} from "./auth";
 import { ServerConfig } from "./config";
 import { decodeOtlpTraceRecords } from "./observability/TraceRecord.ts";
 import { BrowserTraceCollector } from "./observability/Services/BrowserTraceCollector.ts";
@@ -39,6 +48,14 @@ function injectRuntimeHtmlConfig(html: string, authToken: string | undefined): s
     return html.replace("</body>", `${runtimeScript}</body>`);
   }
   return `${runtimeScript}${html}`;
+}
+
+function withNoStoreHeaders(headers?: Record<string, string>) {
+  return {
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    Pragma: "no-cache",
+    ...(headers ?? {}),
+  };
 }
 
 class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
@@ -113,6 +130,9 @@ export const attachmentsRouteLayer = HttpRouter.add(
     }
 
     const config = yield* ServerConfig;
+    if (isAppAuthEnabled(config) && readAppAuthSession(request, config) === null) {
+      return HttpServerResponse.text("Unauthorized", { status: 401 });
+    }
     const rawRelativePath = url.value.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
     const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
     if (!normalizedRelativePath) {
@@ -172,6 +192,11 @@ export const projectFaviconRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Missing cwd parameter", { status: 400 });
     }
 
+    const config = yield* ServerConfig;
+    if (isAppAuthEnabled(config) && readAppAuthSession(request, config) === null) {
+      return HttpServerResponse.text("Unauthorized", { status: 401 });
+    }
+
     const faviconResolver = yield* ProjectFaviconResolver;
     const faviconFilePath = yield* faviconResolver.resolvePath(projectCwd);
     if (!faviconFilePath) {
@@ -194,6 +219,133 @@ export const projectFaviconRouteLayer = HttpRouter.add(
         Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
       ),
     );
+  }),
+);
+
+export const appAuthStatusRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/auth/session",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const config = yield* ServerConfig;
+    const session = readAppAuthSession(request, config);
+    return yield* HttpServerResponse.json(
+      {
+        enabled: config.appAuthEnabled,
+        authenticated: config.appAuthEnabled ? session !== null : true,
+        username: session?.username ?? null,
+        sessionTtlDays: config.appAuthEnabled ? config.appAuthSessionTtlDays : null,
+      },
+      {
+        status: 200,
+        headers: withNoStoreHeaders(),
+      },
+    );
+  }),
+);
+
+export const appAuthLoginRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/login",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const config = yield* ServerConfig;
+    if (!config.appAuthEnabled) {
+      return yield* HttpServerResponse.json(
+        { ok: true, authenticated: true, enabled: false },
+        {
+          status: 200,
+          headers: withNoStoreHeaders(),
+        },
+      );
+    }
+
+    if (!isSameOriginRequest(request)) {
+      return yield* HttpServerResponse.json(
+        { ok: false, message: "Invalid login origin." },
+        {
+          status: 403,
+          headers: withNoStoreHeaders(),
+        },
+      );
+    }
+
+    const body = (yield* request.json.pipe(Effect.catch(() => Effect.succeed(null)))) as
+      | Record<string, unknown>
+      | null;
+    const username = typeof body?.["username"] === "string" ? body.username.trim() : "";
+    const password = typeof body?.["password"] === "string" ? body.password : "";
+    const remember = body?.["remember"] !== false;
+    if (!username || !password) {
+      return yield* HttpServerResponse.json(
+        { ok: false, message: "Username and password are required." },
+        {
+          status: 400,
+          headers: withNoStoreHeaders(),
+        },
+      );
+    }
+
+    if (!verifyAppAuthCredentials(config, username, password)) {
+      return yield* HttpServerResponse.json(
+        { ok: false, message: "Incorrect username or password." },
+        {
+          status: 401,
+          headers: withNoStoreHeaders(),
+        },
+      );
+    }
+
+    const token = createAppAuthSessionToken(config, username);
+    if (!token) {
+      return yield* HttpServerResponse.json(
+        { ok: false, message: "App authentication is not configured correctly." },
+        {
+          status: 500,
+          headers: withNoStoreHeaders(),
+        },
+      );
+    }
+
+    const response = yield* HttpServerResponse.json(
+        {
+          ok: true,
+          authenticated: true,
+          enabled: true,
+          username,
+        },
+        {
+          status: 200,
+          headers: withNoStoreHeaders(),
+        },
+    );
+    return withAppAuthCookie(response, request, token, remember, config);
+  }),
+);
+
+export const appAuthLogoutRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/logout",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const config = yield* ServerConfig;
+    const response = yield* HttpServerResponse.json(
+      {
+        ok: true,
+        authenticated: false,
+        enabled: config.appAuthEnabled,
+      },
+      {
+        status: 200,
+        headers: withNoStoreHeaders(),
+      },
+    );
+
+    if (!config.appAuthEnabled) {
+      return response;
+    }
+
+    return clearAppAuthCookie(response, request);
   }),
 );
 
@@ -264,10 +416,13 @@ export const staticAndDevRouteLayer = HttpRouter.add(
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
       const indexHtml = new TextDecoder().decode(indexData);
-      return HttpServerResponse.text(injectRuntimeHtmlConfig(indexHtml, config.authToken), {
+      return HttpServerResponse.text(
+        injectRuntimeHtmlConfig(indexHtml, config.appAuthEnabled ? undefined : config.authToken),
+        {
         status: 200,
         contentType: "text/html; charset=utf-8",
-      });
+        },
+      );
     }
 
     const contentType = Mime.getType(filePath) ?? "application/octet-stream";
@@ -280,10 +435,13 @@ export const staticAndDevRouteLayer = HttpRouter.add(
 
     if (contentType.startsWith("text/html")) {
       const html = new TextDecoder().decode(data);
-      return HttpServerResponse.text(injectRuntimeHtmlConfig(html, config.authToken), {
+      return HttpServerResponse.text(
+        injectRuntimeHtmlConfig(html, config.appAuthEnabled ? undefined : config.authToken),
+        {
         status: 200,
         contentType,
-      });
+        },
+      );
     }
 
     return HttpServerResponse.uint8Array(data, {

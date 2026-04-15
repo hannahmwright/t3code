@@ -6,6 +6,7 @@ import { isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
+export const SIDEBAR_STALE_ACTIVITY_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
@@ -284,7 +285,7 @@ export function resolveThreadRowClassName(input: {
   isSelected: boolean;
 }): string {
   const baseClassName =
-    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+    "h-10 w-full translate-x-0 cursor-pointer justify-start px-3 text-left select-none text-sm focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring md:h-7 md:px-2 md:text-xs";
 
   if (input.isSelected && input.isActive) {
     return cn(
@@ -610,6 +611,29 @@ export function getProjectSortTimestamp(
   return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
+export function shouldAutoExpandSidebarProject(input: {
+  project: SidebarProject;
+  projectThreads: readonly SidebarThreadSortInput[];
+  active: boolean;
+  now?: number;
+  staleAfterMs?: number;
+}): boolean {
+  if (input.active) {
+    return true;
+  }
+
+  const projectTimestamp = getProjectSortTimestamp(
+    input.project,
+    input.projectThreads,
+    "updated_at",
+  );
+  if (!Number.isFinite(projectTimestamp) || projectTimestamp === Number.NEGATIVE_INFINITY) {
+    return false;
+  }
+
+  return (input.now ?? Date.now()) - projectTimestamp <= (input.staleAfterMs ?? SIDEBAR_STALE_ACTIVITY_THRESHOLD_MS);
+}
+
 export function sortProjectsForSidebar<
   TProject extends SidebarProject,
   TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
@@ -654,8 +678,14 @@ export interface SidebarProjectSection<TProject> {
   projects: TProject[];
 }
 
+export interface SidebarWorkspaceDefinition {
+  name: string;
+  emoji: string | null;
+}
+
 export function groupProjectsForSidebar<TProject extends { project: SidebarProject }>(
   projects: readonly TProject[],
+  workspaceDefinitions: readonly SidebarWorkspaceDefinition[] = [],
 ): SidebarProjectSection<TProject>[] {
   const sections: SidebarProjectSection<TProject>[] = [];
   const sectionByKey = new Map<string, SidebarProjectSection<TProject>>();
@@ -677,6 +707,30 @@ export function groupProjectsForSidebar<TProject extends { project: SidebarProje
       groupName,
       groupEmoji: project.project.groupEmoji,
       projects: [project],
+    };
+    sectionByKey.set(key, nextSection);
+    sections.push(nextSection);
+  }
+
+  for (const workspaceDefinition of workspaceDefinitions) {
+    const groupName = workspaceDefinition.name.trim();
+    if (groupName.length === 0) {
+      continue;
+    }
+    const key = `group:${groupName}`;
+    const existingSection = sectionByKey.get(key);
+    if (existingSection) {
+      if (existingSection.groupEmoji === null && workspaceDefinition.emoji !== null) {
+        existingSection.groupEmoji = workspaceDefinition.emoji;
+      }
+      continue;
+    }
+
+    const nextSection: SidebarProjectSection<TProject> = {
+      key,
+      groupName,
+      groupEmoji: workspaceDefinition.emoji,
+      projects: [],
     };
     sectionByKey.set(key, nextSection);
     sections.push(nextSection);

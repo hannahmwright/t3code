@@ -144,6 +144,37 @@ export function buildServerProvider(input: {
   };
 }
 
+export function buildUncheckedServerProvider(input: {
+  provider: ServerProvider["provider"];
+  enabled: boolean;
+  checkedAt: string;
+  models: ReadonlyArray<ServerProviderModel>;
+  message: string;
+  disabledMessage: string;
+}): ServerProvider {
+  return buildServerProvider({
+    provider: input.provider,
+    enabled: input.enabled,
+    checkedAt: input.checkedAt,
+    models: input.models,
+    probe: input.enabled
+      ? {
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "unknown" },
+          message: input.message,
+        }
+      : {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: input.disabledMessage,
+        },
+  });
+}
+
 export const collectStreamAsString = <E>(
   stream: Stream.Stream<Uint8Array, E>,
 ): Effect.Effect<string, E> =>

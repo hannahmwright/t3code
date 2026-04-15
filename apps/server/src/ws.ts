@@ -25,6 +25,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
+import { isAppAuthEnabled, isSameOriginRequest, readAppAuthSession } from "./auth";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore";
 import { GitManager } from "./git/Services/GitManager";
@@ -831,12 +832,22 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const config = yield* ServerConfig;
-        if (config.authToken) {
-          const url = HttpServerRequest.toURL(request);
+        const url = HttpServerRequest.toURL(request);
+        const token = Option.isSome(url) ? url.value.searchParams.get("token") : null;
+        if (config.authToken && token === config.authToken) {
+          return yield* rpcWebSocketHttpEffect;
+        }
+        if (isAppAuthEnabled(config)) {
+          if (!isSameOriginRequest(request)) {
+            return HttpServerResponse.text("Invalid WebSocket origin", { status: 403 });
+          }
+          if (readAppAuthSession(request, config) === null) {
+            return HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 });
+          }
+        } else if (config.authToken) {
           if (Option.isNone(url)) {
             return HttpServerResponse.text("Invalid WebSocket URL", { status: 400 });
           }
-          const token = url.value.searchParams.get("token");
           if (token !== config.authToken) {
             return HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 });
           }

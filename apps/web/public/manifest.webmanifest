@@ -3,11 +3,11 @@
   "short_name": "T3 Code",
   "description": "T3 Code with installable web app support and background reply notifications.",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/#/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#0f172a",
+  "background_color": "#050816",
+  "theme_color": "#050816",
   "icons": [
     {
       "src": "/icon-192.png",

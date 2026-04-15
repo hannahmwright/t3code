@@ -144,6 +144,10 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.T3CODE_PORT;
   delete env.T3CODE_AUTH_TOKEN;
+  delete env.T3CODE_APP_AUTH_USERNAME;
+  delete env.T3CODE_APP_AUTH_PASSWORD;
+  delete env.T3CODE_APP_AUTH_SESSION_SECRET;
+  delete env.T3CODE_APP_AUTH_SESSION_TTL_DAYS;
   delete env.T3CODE_MODE;
   delete env.T3CODE_NO_BROWSER;
   delete env.T3CODE_HOST;

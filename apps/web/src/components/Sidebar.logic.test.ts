@@ -19,6 +19,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  shouldAutoExpandSidebarProject,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
@@ -59,6 +60,56 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldAutoExpandSidebarProject", () => {
+  it("keeps the active project expanded regardless of age", () => {
+    expect(
+      shouldAutoExpandSidebarProject({
+        project: {
+          id: "project-1",
+          name: "Alpha",
+          groupName: null,
+          groupEmoji: null,
+          createdAt: "2026-03-01T10:00:00.000Z",
+          updatedAt: "2026-03-01T10:00:00.000Z",
+        },
+        projectThreads: [
+          {
+            createdAt: "2026-03-01T10:00:00.000Z",
+            updatedAt: "2026-03-01T10:00:00.000Z",
+            latestUserMessageAt: "2026-03-01T10:00:00.000Z",
+          },
+        ],
+        active: true,
+        now: Date.parse("2026-03-09T10:00:00.000Z"),
+      }),
+    ).toBe(true);
+  });
+
+  it("collapses stale inactive projects by default", () => {
+    expect(
+      shouldAutoExpandSidebarProject({
+        project: {
+          id: "project-1",
+          name: "Alpha",
+          groupName: null,
+          groupEmoji: null,
+          createdAt: "2026-03-01T10:00:00.000Z",
+          updatedAt: "2026-03-01T10:00:00.000Z",
+        },
+        projectThreads: [
+          {
+            createdAt: "2026-03-01T10:00:00.000Z",
+            updatedAt: "2026-03-01T10:00:00.000Z",
+            latestUserMessageAt: "2026-03-03T10:00:00.000Z",
+          },
+        ],
+        active: false,
+        now: Date.parse("2026-03-09T10:00:00.000Z"),
+      }),
+    ).toBe(false);
   });
 });
 
@@ -696,6 +747,62 @@ describe("sidebar thread search", () => {
         end: 18,
       },
     });
+  });
+});
+
+describe("groupProjectsForSidebar", () => {
+  it("includes empty workspace definitions after grouped projects", () => {
+    const sections = groupProjectsForSidebar(
+      [
+        {
+          project: makeProject({
+            id: ProjectId.makeUnsafe("project-1"),
+            groupName: "Client work",
+            groupEmoji: "🗂️",
+          }),
+        },
+      ],
+      [
+        { name: "Client work", emoji: "🗂️" },
+        { name: "Internal", emoji: "🏠" },
+      ],
+    );
+
+    expect(sections).toEqual([
+      {
+        key: "group:Client work",
+        groupName: "Client work",
+        groupEmoji: "🗂️",
+        projects: [
+          {
+            project: makeProject({
+              id: ProjectId.makeUnsafe("project-1"),
+              groupName: "Client work",
+              groupEmoji: "🗂️",
+            }),
+          },
+        ],
+      },
+      {
+        key: "group:Internal",
+        groupName: "Internal",
+        groupEmoji: "🏠",
+        projects: [],
+      },
+    ]);
+  });
+
+  it("prefers the workspace definition emoji when a workspace is otherwise empty", () => {
+    const sections = groupProjectsForSidebar([], [{ name: "Internal", emoji: "🏠" }]);
+
+    expect(sections).toEqual([
+      {
+        key: "group:Internal",
+        groupName: "Internal",
+        groupEmoji: "🏠",
+        projects: [],
+      },
+    ]);
   });
 });
 

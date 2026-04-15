@@ -49,6 +49,11 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly vapidPublicKey: string | undefined;
   readonly vapidPrivateKey: string | undefined;
   readonly vapidSubject: string | undefined;
+  readonly appAuthEnabled: boolean;
+  readonly appAuthUsername: string | undefined;
+  readonly appAuthPassword: string | undefined;
+  readonly appAuthSessionSecret: string | undefined;
+  readonly appAuthSessionTtlDays: number;
   readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
@@ -143,6 +148,11 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           vapidPublicKey: undefined,
           vapidPrivateKey: undefined,
           vapidSubject: undefined,
+          appAuthEnabled: false,
+          appAuthUsername: undefined,
+          appAuthPassword: undefined,
+          appAuthSessionSecret: undefined,
+          appAuthSessionTtlDays: 30,
           cwd,
           baseDir,
           ...derivedPaths,

@@ -4,6 +4,9 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { ServerConfig } from "./config";
 import {
   attachmentsRouteLayer,
+  appAuthLoginRouteLayer,
+  appAuthLogoutRouteLayer,
+  appAuthStatusRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,
@@ -220,6 +223,9 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
+  appAuthStatusRouteLayer,
+  appAuthLoginRouteLayer,
+  appAuthLogoutRouteLayer,
   attachmentsRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,

@@ -23,6 +23,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildServerProvider,
+  buildUncheckedServerProvider,
   DEFAULT_TIMEOUT_MS,
   detailFromResult,
   extractAuthBoolean,
@@ -559,6 +560,19 @@ export const CodexProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.codex),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
+      makeInitialSnapshot: (codexSettings) =>
+        buildUncheckedServerProvider({
+          provider: PROVIDER,
+          enabled: codexSettings.enabled,
+          checkedAt: new Date().toISOString(),
+          models: providerModelsFromSettings(
+            BUILT_IN_MODELS,
+            PROVIDER,
+            codexSettings.customModels,
+          ),
+          message: "Checking Codex provider status in the background.",
+          disabledMessage: "Codex is disabled in T3 Code settings.",
+        }),
       checkProvider,
     });
   }),

@@ -2,26 +2,34 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  addWorkspaceDefinition,
   clearThreadUi,
   markThreadUnread,
+  removeWorkspaceDefinition,
   reorderProjects,
+  seedCollapsedProjectGroups,
+  seedProjectExpansion,
   setProjectExpanded,
   setShowArchivedThreads,
   syncProjects,
   syncThreads,
   toggleProjectGroupCollapsed,
   toggleProjectPinned,
+  updateWorkspaceDefinition,
   type UiState,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     collapsedProjectGroups: [],
+    hasExplicitCollapsedProjectGroupState: false,
+    hasExplicitProjectExpansionState: false,
     projectExpandedById: {},
     pinnedProjectIds: [],
     projectOrder: [],
     showArchivedThreads: false,
     threadLastVisitedAtById: {},
+    workspaceDefinitions: [],
     ...overrides,
   };
 }
@@ -203,6 +211,87 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.projectExpandedById[project1]).toBe(false);
     expect(next.projectOrder).toEqual([project1]);
+  });
+
+  it("seedProjectExpansion initializes collapsed stale projects once", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const syncedState = syncProjects(makeUiState(), [
+      { id: project1, cwd: "/tmp/project-1" },
+      { id: project2, cwd: "/tmp/project-2" },
+    ]);
+
+    const next = seedProjectExpansion(syncedState, [project1]);
+
+    expect(next.hasExplicitProjectExpansionState).toBe(true);
+    expect(next.projectExpandedById).toEqual({
+      [project1]: true,
+      [project2]: false,
+    });
+  });
+
+  it("seedCollapsedProjectGroups initializes workspace collapse state once", () => {
+    const next = seedCollapsedProjectGroups(makeUiState(), ["Client work", "Ops"]);
+
+    expect(next.hasExplicitCollapsedProjectGroupState).toBe(true);
+    expect(next.collapsedProjectGroups).toEqual(["Client work", "Ops"]);
+  });
+
+  it("addWorkspaceDefinition persists an empty workspace definition", () => {
+    const next = addWorkspaceDefinition(makeUiState(), {
+      name: "Client work",
+      emoji: "🗂️",
+    });
+
+    expect(next.workspaceDefinitions).toEqual([
+      {
+        name: "Client work",
+        emoji: "🗂️",
+      },
+    ]);
+  });
+
+  it("updateWorkspaceDefinition renames the workspace and preserves collapsed state", () => {
+    const initialState = makeUiState({
+      collapsedProjectGroups: ["Client work"],
+      workspaceDefinitions: [
+        {
+          name: "Client work",
+          emoji: "🗂️",
+        },
+      ],
+    });
+
+    const next = updateWorkspaceDefinition(initialState, {
+      currentName: "Client work",
+      nextName: "Active clients",
+      nextEmoji: "📁",
+    });
+
+    expect(next.workspaceDefinitions).toEqual([
+      {
+        name: "Active clients",
+        emoji: "📁",
+      },
+    ]);
+    expect(next.collapsedProjectGroups).toEqual(["Active clients"]);
+  });
+
+  it("removeWorkspaceDefinition clears the workspace and its collapsed state", () => {
+    const initialState = makeUiState({
+      collapsedProjectGroups: ["Client work"],
+      workspaceDefinitions: [
+        {
+          name: "Client work",
+          emoji: "🗂️",
+        },
+      ],
+    });
+
+    const next = removeWorkspaceDefinition(initialState, "Client work");
+
+    expect(next.workspaceDefinitions).toEqual([]);
+    expect(next.collapsedProjectGroups).toEqual([]);
   });
 
   it("clearThreadUi removes visit state for deleted threads", () => {

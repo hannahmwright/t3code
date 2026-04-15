@@ -80,7 +80,10 @@ export function buildNotificationPayload(
 
   const project = readModel.projects.find((candidate) => candidate.id === thread.projectId);
   const title = thread.title.trim() || project?.title?.trim() || "T3 Code";
-  const body = normalizeNotificationText(event.payload.text);
+  const messageText =
+    thread.messages.find((candidate) => candidate.id === event.payload.messageId)?.text ??
+    event.payload.text;
+  const body = normalizeNotificationText(messageText);
 
   return {
     title,
@@ -97,8 +100,38 @@ export function isCompletedAssistantReply(
   return (
     event.type === "thread.message-sent" &&
     event.payload.role === "assistant" &&
-    event.payload.streaming === false
+    event.payload.streaming === false &&
+    event.payload.turnId !== null
   );
+}
+
+export function isThreadWaitingOnUserReply(
+  event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>,
+  readModel: OrchestrationReadModel,
+): boolean {
+  const thread = readModel.threads.find((candidate) => candidate.id === event.payload.threadId);
+  return thread?.session?.status === "ready" && thread.session.activeTurnId === null;
+}
+
+export function isLatestCompletedAssistantMessageForTurn(
+  event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>,
+  readModel: OrchestrationReadModel,
+): boolean {
+  const thread = readModel.threads.find((candidate) => candidate.id === event.payload.threadId);
+  if (!thread || event.payload.turnId === null) {
+    return false;
+  }
+
+  const latestCompletedAssistantMessageForTurn = [...thread.messages]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.role === "assistant" &&
+        candidate.turnId === event.payload.turnId &&
+        candidate.streaming === false,
+    );
+
+  return latestCompletedAssistantMessageForTurn?.id === event.payload.messageId;
 }
 
 export function shouldSuppressPushForPresence(
@@ -238,7 +271,14 @@ export const NotificationsServiceLive = Layer.effect(
             !isCompletedAssistantReply(event)
               ? Effect.void
               : Effect.gen(function* () {
+                  yield* Effect.sleep("250 millis");
                   const readModel = yield* orchestrationEngine.getReadModel();
+                  if (
+                    !isThreadWaitingOnUserReply(event, readModel) ||
+                    !isLatestCompletedAssistantMessageForTurn(event, readModel)
+                  ) {
+                    return;
+                  }
                   const payload = buildNotificationPayload(event, readModel);
                   if (!payload) {
                     return;

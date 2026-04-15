@@ -13,6 +13,7 @@ import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   buildServerProvider,
+  buildUncheckedServerProvider,
   DEFAULT_TIMEOUT_MS,
   detailFromResult,
   extractAuthBoolean,
@@ -644,6 +645,19 @@ export const ClaudeProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.claudeAgent),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
+      makeInitialSnapshot: (claudeSettings) =>
+        buildUncheckedServerProvider({
+          provider: PROVIDER,
+          enabled: claudeSettings.enabled,
+          checkedAt: new Date().toISOString(),
+          models: providerModelsFromSettings(
+            BUILT_IN_MODELS,
+            PROVIDER,
+            claudeSettings.customModels,
+          ),
+          message: "Checking Claude provider status in the background.",
+          disabledMessage: "Claude is disabled in T3 Code settings.",
+        }),
       checkProvider,
     });
   }),

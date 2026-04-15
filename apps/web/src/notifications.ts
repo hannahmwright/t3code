@@ -133,3 +133,27 @@ export async function disablePushOnThisDevice(input: {
     installationId: input.installationId,
   });
 }
+
+export async function syncExistingPushSubscription(input: {
+  readonly nativeApi: NativeApi;
+  readonly installationId: string;
+}) {
+  if (!supportsWebPushNotifications()) {
+    return false;
+  }
+
+  const registration = await navigator.serviceWorker.getRegistration();
+  const existingSubscription = await registration?.pushManager.getSubscription();
+  const serverSubscription = toServerPushSubscription(existingSubscription?.toJSON() ?? null);
+  if (!serverSubscription) {
+    return false;
+  }
+
+  await input.nativeApi.server.upsertPushSubscription({
+    installationId: input.installationId,
+    subscription: serverSubscription,
+    userAgent: navigator.userAgent,
+  });
+
+  return true;
+}

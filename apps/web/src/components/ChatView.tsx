@@ -86,6 +86,8 @@ import { LRUCache } from "../lib/lruCache";
 
 import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
+import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useIsMobile } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -100,6 +102,8 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  SettingsIcon,
+  SquarePenIcon,
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -575,6 +579,7 @@ function PersistentThreadTerminalDrawer({
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
+  const isMobile = useIsMobile();
   const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
@@ -587,6 +592,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  const { defaultProjectId, handleNewThread } = useHandleNewThread();
   const rawSearch = useSearch({
     strict: false,
     select: (params) => parseDiffRouteSearch(params),
@@ -701,6 +707,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
+  const mobileHeaderRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const lastKnownScrollTopRef = useRef(0);
   const isPointerScrollActiveRef = useRef(false);
@@ -728,6 +735,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const [mobileHeaderHeight, setMobileHeaderHeight] = useState(0);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -884,6 +892,49 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, existingOpenTerminalThreadIds, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const openSettings = useCallback(() => {
+    void navigate({ to: "/settings" });
+  }, [navigate]);
+  useLayoutEffect(() => {
+    if (!isMobile || isElectron) {
+      setMobileHeaderHeight(0);
+      return;
+    }
+
+    const element = mobileHeaderRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateHeight = () => {
+      setMobileHeaderHeight(element.getBoundingClientRect().height);
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(() => {
+      updateHeight();
+    });
+    observer.observe(element);
+    window.addEventListener("orientationchange", updateHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("orientationchange", updateHeight);
+    };
+  }, [isMobile]);
+
+  const createNewThreadFromCurrentContext = useCallback(() => {
+    const projectId = activeProject?.id ?? defaultProjectId;
+    if (!projectId) {
+      return;
+    }
+
+    void handleNewThread(projectId, {
+      branch: activeThread?.branch ?? null,
+      worktreePath: activeThread?.worktreePath ?? null,
+      envMode: activeThread?.worktreePath ? "worktree" : "local",
+    });
+  }, [activeProject?.id, activeThread, defaultProjectId, handleNewThread]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -3897,10 +3948,38 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
         {!isElectron && (
-          <header className="border-b border-border px-3 py-2 md:hidden">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0" />
-              <span className="text-sm font-medium text-foreground">Threads</span>
+          <header className="border-b border-border bg-background/92 px-4 py-3 backdrop-blur-xl md:hidden">
+            <div className="flex items-center gap-3">
+              <SidebarTrigger className="size-11 shrink-0 rounded-full border border-border/70 bg-background/85 shadow-sm" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold tracking-[0.16em] text-muted-foreground/75 uppercase">
+                  Mobile
+                </p>
+                <span className="block truncate text-[17px] font-semibold text-foreground">
+                  Threads
+                </span>
+              </div>
+              <Button
+                size="icon-sm"
+                variant="outline"
+                className="size-11 rounded-full"
+                aria-label="New thread"
+                title="New thread"
+                disabled={!defaultProjectId}
+                onClick={createNewThreadFromCurrentContext}
+              >
+                <SquarePenIcon className="size-4.5" />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="outline"
+                className="size-11 rounded-full"
+                aria-label="Open settings"
+                title="Open settings"
+                onClick={openSettings}
+              >
+                <SettingsIcon className="size-4.5" />
+              </Button>
             </div>
           </header>
         )}
@@ -3919,12 +3998,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background max-md:min-h-[var(--app-shell-height)]">
       {/* Top bar */}
       <header
+        ref={mobileHeaderRef}
         className={cn(
           "border-b border-border px-3 sm:px-5",
           isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          !isElectron &&
+            "max-md:fixed max-md:inset-x-0 max-md:top-0 max-md:z-30 max-md:bg-background/92 max-md:pt-[calc(env(safe-area-inset-top)+0.5rem)] max-md:pb-3 max-md:backdrop-blur-xl",
         )}
       >
         <ChatHeader
@@ -3953,17 +4035,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
+          onNewThread={createNewThreadFromCurrentContext}
+          onOpenSettings={openSettings}
         />
       </header>
 
-      {/* Error banner */}
-      <ProviderStatusBanner status={activeProviderStatus} />
-      <ThreadErrorBanner
-        error={activeThread.error}
-        onDismiss={() => setThreadError(activeThread.id, null)}
-      />
-      {/* Main content area with optional plan sidebar */}
-      <div className="flex min-h-0 min-w-0 flex-1">
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        style={
+          isMobile && !isElectron && mobileHeaderHeight > 0
+            ? { paddingTop: mobileHeaderHeight }
+            : undefined
+        }
+      >
+        {/* Error banner */}
+        <ProviderStatusBanner status={activeProviderStatus} />
+        <ThreadErrorBanner
+          error={activeThread.error}
+          onDismiss={() => setThreadError(activeThread.id, null)}
+        />
+        {/* Main content area with optional plan sidebar */}
+        <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Messages Wrapper */}
@@ -3971,7 +4063,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             {/* Messages */}
             <div
               ref={setMessagesScrollContainerRef}
-              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-5 sm:py-4"
               onScroll={onMessagesScroll}
               onClickCapture={onMessagesClickCapture}
               onWheel={onMessagesWheel}
@@ -4011,13 +4103,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
             {showScrollToBottom && (
-              <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
+              <div className="pointer-events-none absolute bottom-[calc(env(safe-area-inset-bottom)+6.25rem)] left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5 sm:bottom-1">
                 <button
                   type="button"
                   onClick={() => scrollMessagesToBottom("smooth")}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                  className="pointer-events-auto flex items-center gap-2 rounded-full border border-border/60 bg-card px-3.5 py-2 text-sm text-muted-foreground shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer sm:px-3 sm:py-1 sm:text-xs"
                 >
-                  <ChevronDownIcon className="size-3.5" />
+                  <ChevronDownIcon className="size-4 sm:size-3.5" />
                   Scroll to bottom
                 </button>
               </div>
@@ -4025,7 +4117,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </div>
 
           {/* Input bar */}
-          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+          <div
+            className={cn(
+              "px-4 pt-2 sm:px-5 sm:pt-2",
+              isGitRepo ? "pb-1" : "pb-3 sm:pb-4",
+              "max-md:sticky max-md:bottom-0 max-md:z-20 max-md:bg-transparent max-md:pb-[calc(env(safe-area-inset-bottom)+0.5rem)] max-md:pt-2.5",
+            )}
+          >
             <form
               ref={composerFormRef}
               onSubmit={onSend}
@@ -4046,6 +4144,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   className={cn(
                     "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
                     isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
+                    "max-md:rounded-[24px] max-md:shadow-[0_18px_40px_color-mix(in_srgb,var(--color-black)_10%,transparent)]",
                     composerProviderState.composerSurfaceClassName,
                   )}
                 >
@@ -4451,6 +4550,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             }}
           />
         ) : null}
+        </div>
       </div>
       {/* end horizontal flex container */}
 

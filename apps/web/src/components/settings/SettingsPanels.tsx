@@ -41,6 +41,7 @@ import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useWebNotifications } from "../../hooks/useWebNotifications";
+import { signOutOfApp, useAppAuthStatus } from "../../appAuth";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -557,6 +558,35 @@ function WebNotificationsRows() {
   );
 }
 
+function AppAuthRows() {
+  const authStatus = useAppAuthStatus();
+
+  if (isElectron || !authStatus.enabled || !authStatus.authenticated) {
+    return null;
+  }
+
+  return (
+    <SettingsRow
+      title="Account"
+      description="This device is signed in with the built-in T3 app session."
+      status={authStatus.username ? `Signed in as ${authStatus.username}` : "Signed in"}
+      control={
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => {
+            void signOutOfApp().finally(() => {
+              window.location.reload();
+            });
+          }}
+        >
+          Sign out
+        </Button>
+      }
+    />
+  );
+}
+
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -1029,6 +1059,7 @@ export function GeneralSettingsPanel() {
         />
 
         <WebNotificationsRows />
+        <AppAuthRows />
 
         <SettingsRow
           title="New threads"

@@ -32,6 +32,32 @@ export interface AppState {
   bootstrapComplete: boolean;
 }
 
+export interface ShellBootstrapThread {
+  id: ThreadId;
+  projectId: ProjectId;
+  title: string;
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  session: Thread["session"];
+  error: string | null;
+  createdAt: string;
+  archivedAt: string | null;
+  updatedAt?: string | undefined;
+  latestTurn: Thread["latestTurn"];
+  branch: string | null;
+  worktreePath: string | null;
+  latestUserMessageAt: string | null;
+  hasPendingApprovals: boolean;
+  hasPendingUserInput: boolean;
+  hasActionableProposedPlan: boolean;
+}
+
+export interface ShellBootstrapState {
+  projects: Project[];
+  threads: ShellBootstrapThread[];
+}
+
 const initialState: AppState = {
   projects: [],
   threads: [],
@@ -99,9 +125,9 @@ function mapSession(session: OrchestrationSession): Thread["session"] {
     provider: toLegacyProvider(session.providerName),
     status: toLegacySessionStatus(session.status),
     orchestrationStatus: session.status,
-    activeTurnId: session.activeTurnId ?? undefined,
     createdAt: session.updatedAt,
     updatedAt: session.updatedAt,
+    ...(session.activeTurnId !== null ? { activeTurnId: session.activeTurnId } : {}),
     ...(session.lastError ? { lastError: session.lastError } : {}),
   };
 }
@@ -155,6 +181,15 @@ function mapTurnDiffSummary(
 }
 
 function mapThread(thread: OrchestrationThread): Thread {
+  const messages = thread.messages.slice(-MAX_THREAD_MESSAGES).map(mapMessage);
+  const proposedPlans = thread.proposedPlans.slice(-MAX_THREAD_PROPOSED_PLANS).map(mapProposedPlan);
+  const turnDiffSummaries = thread.checkpoints
+    .slice(-MAX_THREAD_CHECKPOINTS)
+    .map(mapTurnDiffSummary);
+  const activities = thread.activities.slice(-MAX_THREAD_ACTIVITIES).map((activity) => ({
+    ...activity,
+  }));
+
   return {
     id: thread.id,
     codexThreadId: null,
@@ -164,8 +199,8 @@ function mapThread(thread: OrchestrationThread): Thread {
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     session: thread.session ? mapSession(thread.session) : null,
-    messages: thread.messages.map(mapMessage),
-    proposedPlans: thread.proposedPlans.map(mapProposedPlan),
+    messages,
+    proposedPlans,
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
@@ -174,8 +209,8 @@ function mapThread(thread: OrchestrationThread): Thread {
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
-    turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
-    activities: thread.activities.map((activity) => ({ ...activity })),
+    turnDiffSummaries,
+    activities,
   };
 }
 
@@ -584,6 +619,109 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
   const threads = readModel.threads.filter((thread) => thread.deletedAt === null).map(mapThread);
   const sidebarThreadsById = buildSidebarThreadsById(threads);
   const threadIdsByProjectId = buildThreadIdsByProjectId(threads);
+  return {
+    ...state,
+    projects,
+    threads,
+    sidebarThreadsById,
+    threadIdsByProjectId,
+    bootstrapComplete: true,
+  };
+}
+
+export function deriveShellBootstrapState(
+  readModel: OrchestrationReadModel,
+): ShellBootstrapState {
+  const projects = readModel.projects
+    .filter((project) => project.deletedAt === null)
+    .map(mapProject);
+  const threads = readModel.threads
+    .filter((thread) => thread.deletedAt === null)
+    .map(mapThread)
+    .map((thread) => {
+      const summary = buildSidebarThreadSummary(thread);
+      return {
+        id: thread.id,
+        projectId: thread.projectId,
+        title: thread.title,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        session: thread.session,
+        error: thread.error,
+        createdAt: thread.createdAt,
+        archivedAt: thread.archivedAt,
+        updatedAt: thread.updatedAt,
+        latestTurn: thread.latestTurn,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        latestUserMessageAt: summary.latestUserMessageAt,
+        hasPendingApprovals: summary.hasPendingApprovals,
+        hasPendingUserInput: summary.hasPendingUserInput,
+        hasActionableProposedPlan: summary.hasActionableProposedPlan,
+      } satisfies ShellBootstrapThread;
+    });
+
+  return {
+    projects,
+    threads,
+  };
+}
+
+export function hydrateShellBootstrapState(
+  state: AppState,
+  shellState: ShellBootstrapState,
+): AppState {
+  const projects = shellState.projects.map((project) => ({
+    ...project,
+    scripts: mapProjectScripts(project.scripts),
+  }));
+  const threads = shellState.threads.map((thread) => ({
+    id: thread.id,
+    codexThreadId: null,
+    projectId: thread.projectId,
+    title: thread.title,
+    modelSelection: thread.modelSelection,
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+    session: thread.session,
+    messages: [],
+    proposedPlans: [],
+    error: thread.error,
+    createdAt: thread.createdAt,
+    archivedAt: thread.archivedAt,
+    updatedAt: thread.updatedAt,
+    latestTurn: thread.latestTurn,
+    pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    turnDiffSummaries: [],
+    activities: [],
+  }) satisfies Thread);
+  const sidebarThreadsById = Object.fromEntries(
+    shellState.threads.map((thread) => [
+      thread.id,
+      {
+        id: thread.id,
+        projectId: thread.projectId,
+        title: thread.title,
+        interactionMode: thread.interactionMode,
+        session: thread.session,
+        createdAt: thread.createdAt,
+        archivedAt: thread.archivedAt,
+        updatedAt: thread.updatedAt,
+        latestTurn: thread.latestTurn,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        latestUserMessageAt: thread.latestUserMessageAt,
+        hasPendingApprovals: thread.hasPendingApprovals,
+        hasPendingUserInput: thread.hasPendingUserInput,
+        hasActionableProposedPlan: thread.hasActionableProposedPlan,
+      } satisfies SidebarThreadSummary,
+    ]),
+  ) as Record<string, SidebarThreadSummary>;
+  const threadIdsByProjectId = buildThreadIdsByProjectId(threads);
+
   return {
     ...state,
     projects,

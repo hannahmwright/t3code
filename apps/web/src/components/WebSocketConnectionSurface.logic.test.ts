@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { WsConnectionStatus } from "../rpc/wsConnectionState";
-import { shouldAutoReconnect } from "./WebSocketConnectionSurface";
+import {
+  shouldAutoReconnect,
+  shouldBlockInitialConnectionUi,
+  shouldSuppressReconnectUi,
+} from "./WebSocketConnectionSurface";
 
 function makeStatus(overrides: Partial<WsConnectionStatus> = {}): WsConnectionStatus {
   return {
@@ -79,5 +83,70 @@ describe("WebSocketConnectionSurface.logic", () => {
         "focus",
       ),
     ).toBe(true);
+  });
+
+  it("suppresses reconnect ui while the app is hidden", () => {
+    expect(
+      shouldSuppressReconnectUi({
+        hasConnected: true,
+        hidden: true,
+        nowMs: 10_000,
+        lastForegroundResumeAtMs: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("suppresses reconnect ui briefly after returning to foreground", () => {
+    expect(
+      shouldSuppressReconnectUi({
+        hasConnected: true,
+        hidden: false,
+        nowMs: 10_000,
+        lastForegroundResumeAtMs: 5_000,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldSuppressReconnectUi({
+        hasConnected: true,
+        hidden: false,
+        nowMs: 20_000,
+        lastForegroundResumeAtMs: 5_000,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not suppress reconnect ui before the first successful connection", () => {
+    expect(
+      shouldSuppressReconnectUi({
+        hasConnected: false,
+        hidden: false,
+        nowMs: 10_000,
+        lastForegroundResumeAtMs: 5_000,
+      }),
+    ).toBe(false);
+  });
+
+  it("waits for the initial connection grace period before blocking the app", () => {
+    expect(
+      shouldBlockInitialConnectionUi({
+        hasServerConfig: false,
+        waitingForGracePeriod: true,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldBlockInitialConnectionUi({
+        hasServerConfig: false,
+        waitingForGracePeriod: false,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldBlockInitialConnectionUi({
+        hasServerConfig: true,
+        waitingForGracePeriod: false,
+      }),
+    ).toBe(false);
   });
 });

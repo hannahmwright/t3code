@@ -21,14 +21,23 @@ interface PersistedUiState {
   projectOrderCwds?: string[];
   pinnedProjectCwds?: string[];
   collapsedProjectGroups?: string[];
+  workspaceDefinitions?: { name: string; emoji?: string | null }[];
   showArchivedThreads?: boolean;
 }
 
+export interface UiWorkspaceDefinition {
+  name: string;
+  emoji: string | null;
+}
+
 export interface UiProjectState {
+  hasExplicitCollapsedProjectGroupState: boolean;
+  hasExplicitProjectExpansionState: boolean;
   projectExpandedById: Record<string, boolean>;
   projectOrder: ProjectId[];
   pinnedProjectIds: ProjectId[];
   collapsedProjectGroups: string[];
+  workspaceDefinitions: UiWorkspaceDefinition[];
 }
 
 export interface UiThreadState {
@@ -52,10 +61,13 @@ export interface SyncThreadInput {
 }
 
 const initialState: UiState = {
+  hasExplicitCollapsedProjectGroupState: false,
+  hasExplicitProjectExpansionState: false,
   projectExpandedById: {},
   projectOrder: [],
   pinnedProjectIds: [],
   collapsedProjectGroups: [],
+  workspaceDefinitions: [],
   threadLastVisitedAtById: {},
   showArchivedThreads: false,
 };
@@ -65,7 +77,10 @@ const persistedProjectOrderCwds: string[] = [];
 const persistedPinnedProjectCwds: string[] = [];
 const currentProjectCwdById = new Map<ProjectId, string>();
 const persistedCollapsedProjectGroups = new Set<string>();
+const persistedWorkspaceDefinitions: UiWorkspaceDefinition[] = [];
 let persistedShowArchivedThreads = false;
+let persistedHasExplicitCollapsedProjectGroupState = false;
+let persistedHasExplicitProjectExpansionState = false;
 let legacyKeysCleanedUp = false;
 
 function readPersistedState(): UiState {
@@ -83,9 +98,12 @@ function readPersistedState(): UiState {
         hydratePersistedProjectState(JSON.parse(legacyRaw) as PersistedUiState);
         return {
           ...initialState,
+          hasExplicitCollapsedProjectGroupState: persistedHasExplicitCollapsedProjectGroupState,
+          hasExplicitProjectExpansionState: persistedHasExplicitProjectExpansionState,
           collapsedProjectGroups: [...persistedCollapsedProjectGroups].toSorted((left, right) =>
             left.localeCompare(right),
           ),
+          workspaceDefinitions: [...persistedWorkspaceDefinitions],
           showArchivedThreads: persistedShowArchivedThreads,
         };
       }
@@ -94,9 +112,12 @@ function readPersistedState(): UiState {
     hydratePersistedProjectState(JSON.parse(raw) as PersistedUiState);
     return {
       ...initialState,
+      hasExplicitCollapsedProjectGroupState: persistedHasExplicitCollapsedProjectGroupState,
+      hasExplicitProjectExpansionState: persistedHasExplicitProjectExpansionState,
       collapsedProjectGroups: [...persistedCollapsedProjectGroups].toSorted((left, right) =>
         left.localeCompare(right),
       ),
+      workspaceDefinitions: [...persistedWorkspaceDefinitions],
       showArchivedThreads: persistedShowArchivedThreads,
     };
   } catch {
@@ -109,6 +130,9 @@ function hydratePersistedProjectState(parsed: PersistedUiState): void {
   persistedProjectOrderCwds.length = 0;
   persistedPinnedProjectCwds.length = 0;
   persistedCollapsedProjectGroups.clear();
+  persistedWorkspaceDefinitions.length = 0;
+  persistedHasExplicitProjectExpansionState = Object.hasOwn(parsed, "expandedProjectCwds");
+  persistedHasExplicitCollapsedProjectGroupState = Object.hasOwn(parsed, "collapsedProjectGroups");
   for (const cwd of parsed.expandedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
       persistedExpandedProjectCwds.add(cwd);
@@ -128,6 +152,23 @@ function hydratePersistedProjectState(parsed: PersistedUiState): void {
     if (typeof groupName === "string" && groupName.trim().length > 0) {
       persistedCollapsedProjectGroups.add(groupName.trim());
     }
+  }
+  for (const workspaceDefinition of parsed.workspaceDefinitions ?? []) {
+    if (!workspaceDefinition || typeof workspaceDefinition.name !== "string") {
+      continue;
+    }
+    const name = workspaceDefinition.name.trim();
+    if (
+      name.length === 0 ||
+      persistedWorkspaceDefinitions.some((definition) => definition.name === name)
+    ) {
+      continue;
+    }
+    const emoji =
+      typeof workspaceDefinition.emoji === "string" && workspaceDefinition.emoji.trim().length > 0
+        ? workspaceDefinition.emoji.trim()
+        : null;
+    persistedWorkspaceDefinitions.push({ name, emoji });
   }
   persistedShowArchivedThreads = parsed.showArchivedThreads === true;
 }
@@ -158,6 +199,7 @@ function persistState(state: UiState): void {
         expandedProjectCwds,
         pinnedProjectCwds,
         projectOrderCwds,
+        workspaceDefinitions: state.workspaceDefinitions,
         showArchivedThreads: state.showArchivedThreads,
       } satisfies PersistedUiState),
     );
@@ -196,6 +238,19 @@ function projectOrdersEqual(left: readonly ProjectId[], right: readonly ProjectI
 
 function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function workspaceDefinitionsEqual(
+  left: readonly UiWorkspaceDefinition[],
+  right: readonly UiWorkspaceDefinition[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (definition, index) =>
+        definition.name === right[index]?.name && definition.emoji === right[index]?.emoji,
+    )
+  );
 }
 
 export function syncProjects(state: UiState, projects: readonly SyncProjectInput[]): UiState {
@@ -416,6 +471,7 @@ export function toggleProject(state: UiState, projectId: ProjectId): UiState {
   const expanded = state.projectExpandedById[projectId] ?? true;
   return {
     ...state,
+    hasExplicitProjectExpansionState: true,
     projectExpandedById: {
       ...state.projectExpandedById,
       [projectId]: !expanded,
@@ -433,6 +489,7 @@ export function setProjectExpanded(
   }
   return {
     ...state,
+    hasExplicitProjectExpansionState: true,
     projectExpandedById: {
       ...state.projectExpandedById,
       [projectId]: expanded,
@@ -511,6 +568,60 @@ export function toggleProjectGroupCollapsed(state: UiState, groupName: string): 
 
   return {
     ...state,
+    hasExplicitCollapsedProjectGroupState: true,
+    collapsedProjectGroups: nextCollapsedProjectGroups,
+  };
+}
+
+export function seedProjectExpansion(
+  state: UiState,
+  expandedProjectIds: readonly ProjectId[],
+): UiState {
+  if (state.hasExplicitProjectExpansionState) {
+    return state;
+  }
+
+  const expandedProjectIdSet = new Set(expandedProjectIds);
+  const nextExpandedById = Object.fromEntries(
+    [...currentProjectCwdById.keys()].map((projectId) => [projectId, expandedProjectIdSet.has(projectId)]),
+  );
+
+  if (recordsEqual(state.projectExpandedById, nextExpandedById)) {
+    return {
+      ...state,
+      hasExplicitProjectExpansionState: true,
+    };
+  }
+
+  return {
+    ...state,
+    hasExplicitProjectExpansionState: true,
+    projectExpandedById: nextExpandedById,
+  };
+}
+
+export function seedCollapsedProjectGroups(
+  state: UiState,
+  groupNames: readonly string[],
+): UiState {
+  if (state.hasExplicitCollapsedProjectGroupState) {
+    return state;
+  }
+
+  const nextCollapsedProjectGroups = [...new Set(groupNames.map((groupName) => groupName.trim()).filter(Boolean))].toSorted(
+    (left, right) => left.localeCompare(right),
+  );
+
+  if (stringArraysEqual(state.collapsedProjectGroups, nextCollapsedProjectGroups)) {
+    return {
+      ...state,
+      hasExplicitCollapsedProjectGroupState: true,
+    };
+  }
+
+  return {
+    ...state,
+    hasExplicitCollapsedProjectGroupState: true,
     collapsedProjectGroups: nextCollapsedProjectGroups,
   };
 }
@@ -526,6 +637,113 @@ export function setShowArchivedThreads(state: UiState, showArchivedThreads: bool
   };
 }
 
+export function addWorkspaceDefinition(
+  state: UiState,
+  definition: UiWorkspaceDefinition,
+): UiState {
+  const name = definition.name.trim();
+  if (name.length === 0) {
+    return state;
+  }
+
+  const emoji = definition.emoji?.trim() ? definition.emoji.trim() : null;
+  const nextWorkspaceDefinitions = state.workspaceDefinitions.some(
+    (entry) => entry.name === name,
+  )
+    ? state.workspaceDefinitions.map((entry) => (entry.name === name ? { name, emoji } : entry))
+    : [...state.workspaceDefinitions, { name, emoji }];
+
+  if (workspaceDefinitionsEqual(state.workspaceDefinitions, nextWorkspaceDefinitions)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    workspaceDefinitions: nextWorkspaceDefinitions,
+  };
+}
+
+export function updateWorkspaceDefinition(
+  state: UiState,
+  input: {
+    currentName: string;
+    nextName: string;
+    nextEmoji: string | null;
+  },
+): UiState {
+  const currentName = input.currentName.trim();
+  const nextName = input.nextName.trim();
+  const nextEmoji = input.nextEmoji?.trim() ? input.nextEmoji.trim() : null;
+  if (currentName.length === 0) {
+    return state;
+  }
+
+  if (nextName.length === 0) {
+    return removeWorkspaceDefinition(state, currentName);
+  }
+
+  const nextWorkspaceDefinitions = state.workspaceDefinitions.some(
+    (definition) => definition.name === currentName,
+  )
+    ? state.workspaceDefinitions.map((definition) =>
+        definition.name === currentName ? { name: nextName, emoji: nextEmoji } : definition,
+      )
+    : [...state.workspaceDefinitions, { name: nextName, emoji: nextEmoji }];
+  const dedupedWorkspaceDefinitions: UiWorkspaceDefinition[] = [];
+  for (const definition of nextWorkspaceDefinitions) {
+    if (dedupedWorkspaceDefinitions.some((entry) => entry.name === definition.name)) {
+      continue;
+    }
+    dedupedWorkspaceDefinitions.push(definition);
+  }
+
+  const nextCollapsedProjectGroups = state.collapsedProjectGroups.map((groupName) =>
+    groupName === currentName ? nextName : groupName,
+  );
+
+  if (
+    workspaceDefinitionsEqual(state.workspaceDefinitions, dedupedWorkspaceDefinitions) &&
+    stringArraysEqual(state.collapsedProjectGroups, nextCollapsedProjectGroups)
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    collapsedProjectGroups: [...new Set(nextCollapsedProjectGroups)].toSorted((left, right) =>
+      left.localeCompare(right),
+    ),
+    workspaceDefinitions: dedupedWorkspaceDefinitions,
+  };
+}
+
+export function removeWorkspaceDefinition(state: UiState, workspaceName: string): UiState {
+  const normalizedWorkspaceName = workspaceName.trim();
+  if (normalizedWorkspaceName.length === 0) {
+    return state;
+  }
+
+  const nextWorkspaceDefinitions = state.workspaceDefinitions.filter(
+    (definition) => definition.name !== normalizedWorkspaceName,
+  );
+  const nextCollapsedProjectGroups = state.collapsedProjectGroups.filter(
+    (groupName) => groupName !== normalizedWorkspaceName,
+  );
+
+  if (
+    workspaceDefinitionsEqual(state.workspaceDefinitions, nextWorkspaceDefinitions) &&
+    stringArraysEqual(state.collapsedProjectGroups, nextCollapsedProjectGroups)
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    collapsedProjectGroups: nextCollapsedProjectGroups,
+    workspaceDefinitions: nextWorkspaceDefinitions,
+  };
+}
+
 interface UiStateStore extends UiState {
   syncProjects: (projects: readonly SyncProjectInput[]) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
@@ -537,6 +755,15 @@ interface UiStateStore extends UiState {
   reorderProjects: (draggedProjectId: ProjectId, targetProjectId: ProjectId) => void;
   toggleProjectPinned: (projectId: ProjectId, pinned?: boolean) => void;
   toggleProjectGroupCollapsed: (groupName: string) => void;
+  seedProjectExpansion: (expandedProjectIds: readonly ProjectId[]) => void;
+  seedCollapsedProjectGroups: (groupNames: readonly string[]) => void;
+  addWorkspaceDefinition: (definition: UiWorkspaceDefinition) => void;
+  updateWorkspaceDefinition: (input: {
+    currentName: string;
+    nextName: string;
+    nextEmoji: string | null;
+  }) => void;
+  removeWorkspaceDefinition: (workspaceName: string) => void;
   setShowArchivedThreads: (showArchivedThreads: boolean) => void;
 }
 
@@ -558,6 +785,14 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => toggleProjectPinned(state, projectId, pinned)),
   toggleProjectGroupCollapsed: (groupName) =>
     set((state) => toggleProjectGroupCollapsed(state, groupName)),
+  seedProjectExpansion: (expandedProjectIds) =>
+    set((state) => seedProjectExpansion(state, expandedProjectIds)),
+  seedCollapsedProjectGroups: (groupNames) =>
+    set((state) => seedCollapsedProjectGroups(state, groupNames)),
+  addWorkspaceDefinition: (definition) => set((state) => addWorkspaceDefinition(state, definition)),
+  updateWorkspaceDefinition: (input) => set((state) => updateWorkspaceDefinition(state, input)),
+  removeWorkspaceDefinition: (workspaceName) =>
+    set((state) => removeWorkspaceDefinition(state, workspaceName)),
   setShowArchivedThreads: (showArchivedThreads) =>
     set((state) => setShowArchivedThreads(state, showArchivedThreads)),
 }));

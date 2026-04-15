@@ -122,9 +122,11 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  SIDEBAR_STALE_ACTIVITY_THRESHOLD_MS,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
+  shouldAutoExpandSidebarProject,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
@@ -136,12 +138,16 @@ import { useSettings } from "~/hooks/useSettings";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "./ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "./ui/field";
 import { Input } from "./ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
-import type { Project } from "../types";
+import type { Project, Thread } from "../types";
 
 const THREAD_PREVIEW_LIMIT = 6;
 const PROJECT_GROUP_DROP_PREFIX = "sidebar-project-group:";
+const PROJECT_WORKSPACE_NONE_VALUE = "__sidebar-workspace-none__";
+const PROJECT_WORKSPACE_CREATE_VALUE = "__sidebar-workspace-create__";
+const MOBILE_SIDEBAR_NAVIGATION_DELAY_MS = 180;
 const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   duration: 180,
   easing: "ease-out",
@@ -200,7 +206,6 @@ interface ProjectEditDraft {
   name: string;
   emoji: string;
   groupName: string;
-  groupEmoji: string;
 }
 
 interface ProjectGroupEditDraft {
@@ -212,9 +217,14 @@ interface ProjectGroupEditDraft {
 }
 
 interface AddProjectDraft {
-  mode: "workspace" | "project";
   groupName: string;
   groupEmoji: string;
+}
+
+interface WorkspaceCreateDraft {
+  name: string;
+  emoji: string;
+  applyToProjectId?: ProjectId;
 }
 
 interface TerminalStatusIndicator {
@@ -243,10 +253,10 @@ function ThreadStatusLabel({
     return (
       <span
         title={status.label}
-        className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+        className={`inline-flex size-4 shrink-0 items-center justify-center md:size-3.5 ${status.colorClass}`}
       >
         <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
+          className={`size-2.5 rounded-full md:size-[9px] ${status.dotClass} ${
             status.pulse ? "animate-pulse" : ""
           }`}
         />
@@ -258,10 +268,10 @@ function ThreadStatusLabel({
   return (
     <span
       title={status.label}
-      className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+      className={`inline-flex items-center gap-1.5 text-xs md:gap-1 md:text-[10px] ${status.colorClass}`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+        className={`h-2 w-2 rounded-full md:h-1.5 md:w-1.5 ${status.dotClass} ${
           status.pulse ? "animate-pulse" : ""
         }`}
       />
@@ -414,7 +424,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
       }}
     >
       <SidebarMenuSubButton
-        render={<div role="button" tabIndex={0} />}
+        render={<button type="button" />}
         size="sm"
         isActive={isActive}
         data-testid={`thread-row-${thread.id}`}
@@ -448,7 +458,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
           }
         }}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-left md:gap-1.5">
           {prStatus && (
             <Tooltip>
               <TooltipTrigger
@@ -461,7 +471,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                       props.openPrLink(event, prStatus.url);
                     }}
                   >
-                    <GitPullRequestIcon className="size-3" />
+                    <GitPullRequestIcon className="size-4 md:size-3" />
                   </button>
                 }
               />
@@ -478,7 +488,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                   element.select();
                 }
               }}
-              className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+              className="min-w-0 flex-1 truncate rounded border border-ring bg-transparent px-1.5 py-1 text-sm outline-none md:px-0.5 md:py-0 md:text-xs"
               value={props.renamingTitle}
               onChange={(event) => props.setRenamingTitle(event.target.value)}
               onKeyDown={(event) => {
@@ -501,17 +511,17 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
               onClick={(event) => event.stopPropagation()}
             />
           ) : (
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <span className="min-w-0 flex-1 truncate text-xs">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 md:gap-1.5">
+              <span className="min-w-0 flex-1 truncate text-[15px] md:text-xs">
                 {renderHighlightedMatch(thread.title, props.searchMatch?.titleMatch ?? null)}
               </span>
               {isArchived ? (
-                <span className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                <span className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70 md:px-1.5 md:py-0.5 md:text-[9px]">
                   Archived
                 </span>
               ) : null}
               {props.searchMatch?.matchedInMessages ? (
-                <span className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                <span className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70 md:px-1.5 md:py-0.5 md:text-[9px]">
                   Matched in chat
                 </span>
               ) : null}
@@ -526,7 +536,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
               title={terminalStatus.label}
               className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
             >
-              <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+              <TerminalIcon className={`size-4 md:size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
             </span>
           )}
           <div className="flex min-w-12 justify-end">
@@ -543,7 +553,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                 data-thread-selection-safe
                 data-testid={`thread-archive-confirm-${thread.id}`}
                 aria-label={`Confirm archive ${thread.title}`}
-                className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-full bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+                className="absolute top-1/2 right-1 inline-flex h-8 -translate-y-1/2 cursor-pointer items-center rounded-full bg-destructive/12 px-3 text-xs font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40 md:h-5 md:px-2 md:text-[10px]"
                 onPointerDown={(event) => {
                   event.stopPropagation();
                 }}
@@ -566,7 +576,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                     data-thread-selection-safe
                     data-testid={`thread-archive-${thread.id}`}
                     aria-label={`Archive ${thread.title}`}
-                    className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                    className="inline-flex size-8 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:size-5"
                     onPointerDown={(event) => {
                       event.stopPropagation();
                     }}
@@ -579,7 +589,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                       });
                     }}
                   >
-                    <ArchiveIcon className="size-3.5" />
+                    <ArchiveIcon className="size-4.5 md:size-3.5" />
                   </button>
                 </div>
               ) : (
@@ -592,7 +602,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                           data-thread-selection-safe
                           data-testid={`thread-archive-${thread.id}`}
                           aria-label={`Archive ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                          className="inline-flex size-8 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:size-5"
                           onPointerDown={(event) => {
                             event.stopPropagation();
                           }}
@@ -602,7 +612,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                             void props.attemptArchiveThread(thread.id);
                           }}
                         >
-                          <ArchiveIcon className="size-3.5" />
+                          <ArchiveIcon className="size-4.5 md:size-3.5" />
                         </button>
                       </div>
                     }
@@ -614,14 +624,14 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
             <span className={threadMetaClassName}>
               {props.showThreadJumpHints && props.jumpLabel ? (
                 <span
-                  className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
+                  className="inline-flex h-8 items-center rounded-full border border-border/80 bg-background/90 px-2.5 font-mono text-xs font-medium tracking-tight text-foreground shadow-sm md:h-5 md:px-1.5 md:text-[10px]"
                   title={props.jumpLabel}
                 >
                   {props.jumpLabel}
                 </span>
               ) : (
                 <span
-                  className={`text-[10px] ${
+                  className={`text-[13px] md:text-[10px] ${
                     isHighlighted
                       ? "text-foreground/72 dark:text-foreground/82"
                       : "text-muted-foreground/40"
@@ -705,7 +715,7 @@ function ProjectGroupHeader({
   onClick,
   onAddProject,
   onContextMenu,
-  manualSorting,
+  canDropProjects,
   projectCount,
 }: {
   collapsed: boolean;
@@ -714,39 +724,41 @@ function ProjectGroupHeader({
   onClick: () => void;
   onAddProject?: (() => void) | null;
   onContextMenu: (event: MouseEvent<HTMLButtonElement>) => void;
-  manualSorting: boolean;
+  canDropProjects: boolean;
   projectCount: number;
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: groupDropId(groupName),
-    disabled: !manualSorting,
+    disabled: !canDropProjects,
   });
 
   return (
-    <div className="group/project-group relative">
+    <div className="group/project-group relative rounded-2xl border border-border/60 bg-muted/30 p-2 shadow-sm shadow-black/4 dark:bg-muted/18 md:rounded-lg md:p-1">
       <button
         ref={setNodeRef}
         type="button"
-        className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground ${
-          isOver ? "bg-accent text-foreground ring-1 ring-primary/35" : ""
+        className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors hover:bg-background/80 hover:text-foreground md:gap-2 md:rounded-md md:px-2 md:py-1.5 ${
+          isOver ? "bg-background text-foreground ring-1 ring-primary/35" : "text-foreground/84"
         }`}
         onClick={onClick}
         onContextMenu={onContextMenu}
         title={
-          manualSorting ? "Click to collapse. Drop a project here to move it into this folder." : undefined
+          canDropProjects
+            ? "Click to collapse. Drop a project here to move it into this workspace."
+            : undefined
         }
       >
         <ChevronRightIcon
-          className={`size-3 shrink-0 transition-transform duration-150 ${collapsed ? "" : "rotate-90"}`}
+          className={`size-4.5 shrink-0 transition-transform duration-150 md:size-3 ${collapsed ? "" : "rotate-90"}`}
         />
         {emoji ? (
-          <span className="inline-flex size-3.5 shrink-0 items-center justify-center text-sm leading-none">
+          <span className="inline-flex size-6 shrink-0 items-center justify-center text-lg leading-none md:size-3.5 md:text-sm">
             {emoji}
           </span>
         ) : (
-          <FolderIcon className="size-3.5 shrink-0" />
+          <FolderIcon className="size-6 shrink-0 md:size-3.5" />
         )}
-        <span className="min-w-0 flex-1 truncate">{groupName}</span>
+        <div className="min-w-0 flex-1 truncate text-[17px] font-medium md:text-sm">{groupName}</div>
         <span
           className={`ml-auto flex items-center gap-1 transition-opacity duration-150 ${
             onAddProject
@@ -754,7 +766,7 @@ function ProjectGroupHeader({
               : ""
           }`}
         >
-          <span className="inline-flex items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal text-muted-foreground/70">
+          <span className="inline-flex items-center rounded-full border border-border/70 bg-background/85 px-2.5 py-1 text-xs font-medium normal-case tracking-normal text-muted-foreground/80 md:px-1.5 md:py-0.5 md:text-[9px]">
             {projectCount} {projectCount === 1 ? "project" : "projects"}
           </span>
         </span>
@@ -765,7 +777,7 @@ function ProjectGroupHeader({
             type="button"
             aria-label={`Add project to ${groupName}`}
             title={`Add project to ${groupName}`}
-            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+            className="inline-flex size-9 items-center justify-center rounded-xl bg-background/80 text-muted-foreground/80 transition-colors hover:bg-background hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:size-5 md:rounded-md"
             onPointerDown={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -776,7 +788,7 @@ function ProjectGroupHeader({
               onAddProject();
             }}
           >
-            <PlusIcon className="size-3.5" />
+            <PlusIcon className="size-4.5 md:size-3.5" />
           </button>
         </div>
       ) : null}
@@ -789,22 +801,28 @@ export default function Sidebar() {
   const threads = useStore((store) => store.threads);
   const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
-  const { open, setOpen } = useSidebar();
+  const { isMobile, open, setOpen, setOpenMobile } = useSidebar();
   const {
     collapsedProjectGroups,
+    hasExplicitCollapsedProjectGroupState,
+    hasExplicitProjectExpansionState,
     pinnedProjectIds,
     projectExpandedById,
     projectOrder,
     showArchivedThreads,
     threadLastVisitedAtById,
+    workspaceDefinitions,
   } = useUiStateStore(
     useShallow((store) => ({
       collapsedProjectGroups: store.collapsedProjectGroups,
+      hasExplicitCollapsedProjectGroupState: store.hasExplicitCollapsedProjectGroupState,
+      hasExplicitProjectExpansionState: store.hasExplicitProjectExpansionState,
       pinnedProjectIds: store.pinnedProjectIds,
       projectExpandedById: store.projectExpandedById,
       projectOrder: store.projectOrder,
       showArchivedThreads: store.showArchivedThreads,
       threadLastVisitedAtById: store.threadLastVisitedAtById,
+      workspaceDefinitions: store.workspaceDefinitions,
     })),
   );
   const markThreadUnread = useUiStateStore((store) => store.markThreadUnread);
@@ -812,7 +830,12 @@ export default function Sidebar() {
   const toggleProjectGroupCollapsed = useUiStateStore((store) => store.toggleProjectGroupCollapsed);
   const toggleProjectPinned = useUiStateStore((store) => store.toggleProjectPinned);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const seedCollapsedProjectGroups = useUiStateStore((store) => store.seedCollapsedProjectGroups);
+  const seedProjectExpansion = useUiStateStore((store) => store.seedProjectExpansion);
   const setShowArchivedThreads = useUiStateStore((store) => store.setShowArchivedThreads);
+  const addWorkspaceDefinition = useUiStateStore((store) => store.addWorkspaceDefinition);
+  const updateWorkspaceDefinition = useUiStateStore((store) => store.updateWorkspaceDefinition);
+  const removeWorkspaceDefinition = useUiStateStore((store) => store.removeWorkspaceDefinition);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
@@ -833,6 +856,9 @@ export default function Sidebar() {
   });
   const keybindings = useServerKeybindings();
   const [addProjectDraft, setAddProjectDraft] = useState<AddProjectDraft | null>(null);
+  const [workspaceCreateDraft, setWorkspaceCreateDraft] = useState<WorkspaceCreateDraft | null>(
+    null,
+  );
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
@@ -857,6 +883,7 @@ export default function Sidebar() {
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const mobileSidebarNavigationTimeoutRef = useRef<number | null>(null);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -867,7 +894,6 @@ export default function Sidebar() {
   const platform = navigator.platform;
   const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addProjectDraft !== null;
-  const isAddingWorkspace = addProjectDraft?.mode === "workspace";
   const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
   const normalizedThreadSearchQuery = useMemo(
     () => normalizeSidebarThreadSearchQuery(deferredThreadSearchQuery),
@@ -901,6 +927,93 @@ export default function Sidebar() {
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
+  );
+  const workspaceDefinitionByName = useMemo(
+    () => new Map(workspaceDefinitions.map((workspace) => [workspace.name, workspace] as const)),
+    [workspaceDefinitions],
+  );
+  const resolveWorkspaceEmojiByName = useCallback(
+    (workspaceName: string) => {
+      const normalizedWorkspaceName = workspaceName.trim();
+      if (normalizedWorkspaceName.length === 0) {
+        return null;
+      }
+
+      return (
+        workspaceDefinitionByName.get(normalizedWorkspaceName)?.emoji ??
+        projects.find((project) => project.groupName === normalizedWorkspaceName)?.groupEmoji ??
+        null
+      );
+    },
+    [projects, workspaceDefinitionByName],
+  );
+  const workspaceOptions = useMemo(() => {
+    const options = new Map<string, { name: string; emoji: string | null }>();
+
+    for (const workspaceDefinition of workspaceDefinitions) {
+      const normalizedName = workspaceDefinition.name.trim();
+      if (normalizedName.length === 0) {
+        continue;
+      }
+      options.set(normalizedName, {
+        name: normalizedName,
+        emoji: workspaceDefinition.emoji,
+      });
+    }
+
+    for (const project of projects) {
+      const normalizedName = project.groupName?.trim() ?? "";
+      if (normalizedName.length === 0 || options.has(normalizedName)) {
+        continue;
+      }
+      options.set(normalizedName, {
+        name: normalizedName,
+        emoji: project.groupEmoji ?? null,
+      });
+    }
+
+    return [...options.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, [projects, workspaceDefinitions]);
+  const routeThreadProjectId = useMemo(
+    () => (routeThreadId ? threads.find((thread) => thread.id === routeThreadId)?.projectId ?? null : null),
+    [routeThreadId, threads],
+  );
+  const autoExpandedProjectIds = useMemo(() => {
+    const activeProjectIds = new Set<ProjectId>();
+    if (activeDraftThread?.projectId) {
+      activeProjectIds.add(activeDraftThread.projectId);
+    }
+    if (activeThread?.projectId) {
+      activeProjectIds.add(activeThread.projectId);
+    }
+    if (routeThreadProjectId) {
+      activeProjectIds.add(routeThreadProjectId);
+    }
+
+    const threadsByProjectId = new Map<ProjectId, Thread[]>();
+    for (const thread of threads) {
+      if (thread.archivedAt !== null) {
+        continue;
+      }
+      const existingThreads = threadsByProjectId.get(thread.projectId) ?? [];
+      existingThreads.push(thread);
+      threadsByProjectId.set(thread.projectId, existingThreads);
+    }
+
+    return sidebarProjects.flatMap((project) =>
+      shouldAutoExpandSidebarProject({
+        project,
+        projectThreads: threadsByProjectId.get(project.id) ?? [],
+        active: activeProjectIds.has(project.id),
+        staleAfterMs: SIDEBAR_STALE_ACTIVITY_THRESHOLD_MS,
+      })
+        ? [project.id]
+        : [],
+    );
+  }, [activeDraftThread?.projectId, activeThread?.projectId, routeThreadProjectId, sidebarProjects, threads]);
+  const autoExpandedProjectIdSet = useMemo(
+    () => new Set(autoExpandedProjectIds),
+    [autoExpandedProjectIds],
   );
   const routeTerminalOpen = routeThreadId
     ? selectThreadTerminalState(terminalStateByThreadId, routeThreadId).terminalOpen
@@ -937,6 +1050,34 @@ export default function Sidebar() {
     });
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (mobileSidebarNavigationTimeoutRef.current !== null) {
+        window.clearTimeout(mobileSidebarNavigationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const runSidebarNavigation = useCallback(
+    (callback: () => void) => {
+      if (!isMobile) {
+        callback();
+        return;
+      }
+
+      setOpenMobile(false);
+      if (mobileSidebarNavigationTimeoutRef.current !== null) {
+        window.clearTimeout(mobileSidebarNavigationTimeoutRef.current);
+      }
+
+      mobileSidebarNavigationTimeoutRef.current = window.setTimeout(() => {
+        mobileSidebarNavigationTimeoutRef.current = null;
+        callback();
+      }, MOBILE_SIDEBAR_NAVIGATION_DELAY_MS);
+    },
+    [isMobile, setOpenMobile],
+  );
+
   const attemptArchiveThread = useCallback(
     async (threadId: ThreadId) => {
       try {
@@ -963,12 +1104,20 @@ export default function Sidebar() {
       )[0];
       if (!latestThread) return;
 
-      void navigate({
-        to: "/$threadId",
-        params: { threadId: latestThread.id },
+      runSidebarNavigation(() => {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: latestThread.id },
+        });
       });
     },
-    [appSettings.sidebarThreadSortOrder, navigate, sidebarThreadsById, threadIdsByProjectId],
+    [
+      appSettings.sidebarThreadSortOrder,
+      navigate,
+      runSidebarNavigation,
+      sidebarThreadsById,
+      threadIdsByProjectId,
+    ],
   );
 
   const addProjectFromPath = useCallback(
@@ -1044,32 +1193,14 @@ export default function Sidebar() {
   );
 
   const handleAddProject = () => {
-    if (addProjectDraft?.mode === "workspace" && addProjectDraft.groupName.trim().length === 0) {
-      toastManager.add({
-        type: "warning",
-        title: "Workspace name cannot be empty",
-      });
-      return;
-    }
-
     void addProjectFromPath(newCwd, addProjectDraft);
   };
 
-  const canAddProject =
-    newCwd.trim().length > 0 &&
-    !isAddingProject &&
-    (addProjectDraft?.mode !== "workspace" || addProjectDraft.groupName.trim().length > 0);
+  const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
 
   const handlePickFolder = async (targetDraft: AddProjectDraft | null = addProjectDraft) => {
     const api = readNativeApi();
     if (!api || isPickingFolder) return;
-    if (targetDraft?.mode === "workspace" && targetDraft.groupName.trim().length === 0) {
-      toastManager.add({
-        type: "warning",
-        title: "Workspace name cannot be empty",
-      });
-      return;
-    }
     setIsPickingFolder(true);
     let pickedPath: string | null = null;
     try {
@@ -1085,24 +1216,17 @@ export default function Sidebar() {
     setIsPickingFolder(false);
   };
 
-  const handleStartAddWorkspace = () => {
-    setAddProjectError(null);
-    setNewCwd("");
-    setAddProjectDraft((current) =>
-      current?.mode === "workspace"
-        ? null
-        : {
-            mode: "workspace",
-            groupName: "",
-            groupEmoji: "",
-          },
-    );
+  const handleStartAddWorkspace = (input?: { applyToProjectId?: ProjectId; name?: string }) => {
+    setWorkspaceCreateDraft({
+      name: input?.name ?? "",
+      emoji: "",
+      ...(input?.applyToProjectId ? { applyToProjectId: input.applyToProjectId } : {}),
+    });
   };
 
   const handleStartAddProjectForGroup = useCallback(
     (groupName: string, groupEmoji: string | null) => {
       const targetDraft: AddProjectDraft = {
-        mode: "project",
         groupName,
         groupEmoji: groupEmoji ?? "",
       };
@@ -1122,6 +1246,43 @@ export default function Sidebar() {
     [handlePickFolder, shouldBrowseForProjectImmediately],
   );
 
+  const createWorkspace = useCallback(() => {
+    const nextName = workspaceCreateDraft?.name.trim() ?? "";
+    const nextEmoji = workspaceCreateDraft?.emoji.trim() ?? "";
+
+    if (nextName.length === 0) {
+      toastManager.add({
+        type: "warning",
+        title: "Workspace name cannot be empty",
+      });
+      return;
+    }
+
+    if (workspaceDefinitionByName.has(nextName)) {
+      toastManager.add({
+        type: "warning",
+        title: "Workspace already exists",
+      });
+      return;
+    }
+
+    addWorkspaceDefinition({
+      name: nextName,
+      emoji: nextEmoji.length > 0 ? nextEmoji : null,
+    });
+    if (workspaceCreateDraft?.applyToProjectId) {
+      setEditingProject((current) =>
+        current && current.projectId === workspaceCreateDraft.applyToProjectId
+          ? {
+              ...current,
+              groupName: nextName,
+            }
+          : current,
+      );
+    }
+    setWorkspaceCreateDraft(null);
+  }, [addWorkspaceDefinition, workspaceCreateDraft, workspaceDefinitionByName]);
+
   const cancelRename = useCallback(() => {
     setRenamingThreadId(null);
     renamingInputRef.current = null;
@@ -1133,7 +1294,6 @@ export default function Sidebar() {
       name: project.name,
       emoji: project.emoji ?? "",
       groupName: project.groupName ?? "",
-      groupEmoji: project.groupEmoji ?? "",
     });
   }, []);
 
@@ -1193,6 +1353,7 @@ export default function Sidebar() {
     const nextName = editingProject.name.trim();
     const nextEmoji = editingProject.emoji.trim();
     const nextGroupName = editingProject.groupName.trim();
+    const nextGroupEmoji = resolveWorkspaceEmojiByName(nextGroupName);
 
     if (nextName.length === 0) {
       toastManager.add({
@@ -1215,14 +1376,12 @@ export default function Sidebar() {
     if (nextEmoji !== (project.emoji ?? "")) {
       patch.emoji = nextEmoji.length > 0 ? nextEmoji : null;
     }
-    if (nextGroupName !== (project.groupName ?? "")) {
+    if (
+      nextGroupName !== (project.groupName ?? "") ||
+      nextGroupEmoji !== (project.groupEmoji ?? null)
+    ) {
       patch.groupName = nextGroupName.length > 0 ? nextGroupName : null;
-      patch.groupEmoji =
-        nextGroupName.length > 0
-          ? (projects.find(
-              (entry) => entry.id !== project.id && entry.groupName === nextGroupName,
-            )?.groupEmoji ?? null)
-          : null;
+      patch.groupEmoji = nextGroupName.length > 0 ? nextGroupEmoji : null;
     }
 
     if (Object.keys(patch).length === 0) {
@@ -1243,7 +1402,13 @@ export default function Sidebar() {
     } finally {
       setIsSavingProjectEdit(false);
     }
-  }, [editingProject, isSavingProjectEdit, projects, updateProjectMetadata]);
+  }, [
+    editingProject,
+    isSavingProjectEdit,
+    projects,
+    resolveWorkspaceEmojiByName,
+    updateProjectMetadata,
+  ]);
 
   const saveProjectGroupEdit = useCallback(async () => {
     if (!editingProjectGroup || isSavingProjectEdit) {
@@ -1262,24 +1427,51 @@ export default function Sidebar() {
 
     setIsSavingProjectEdit(true);
     try {
-      await updateProjectsGroupMetadata(
-        editingProjectGroup.projectIds,
-        {
-          groupName: nextGroupName.length > 0 ? nextGroupName : null,
-          groupEmoji: nextGroupName.length > 0 && nextGroupEmoji.length > 0 ? nextGroupEmoji : null,
-        },
-      );
+      if (nextGroupName.length === 0) {
+        removeWorkspaceDefinition(editingProjectGroup.currentName);
+        await updateProjectsGroupMetadata(editingProjectGroup.projectIds, {
+          groupName: null,
+          groupEmoji: null,
+        });
+      } else {
+        if (
+          nextGroupName !== editingProjectGroup.currentName &&
+          workspaceDefinitionByName.has(nextGroupName)
+        ) {
+          toastManager.add({
+            type: "warning",
+            title: "Workspace already exists",
+          });
+          return;
+        }
+        updateWorkspaceDefinition({
+          currentName: editingProjectGroup.currentName,
+          nextName: nextGroupName,
+          nextEmoji: nextGroupEmoji.length > 0 ? nextGroupEmoji : null,
+        });
+        await updateProjectsGroupMetadata(editingProjectGroup.projectIds, {
+          groupName: nextGroupName,
+          groupEmoji: nextGroupEmoji.length > 0 ? nextGroupEmoji : null,
+        });
+      }
       setEditingProjectGroup(null);
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Failed to update folder",
+        title: "Failed to update workspace",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     } finally {
       setIsSavingProjectEdit(false);
     }
-  }, [editingProjectGroup, isSavingProjectEdit, updateProjectsGroupMetadata]);
+  }, [
+    editingProjectGroup,
+    isSavingProjectEdit,
+    removeWorkspaceDefinition,
+    updateProjectsGroupMetadata,
+    updateWorkspaceDefinition,
+    workspaceDefinitionByName,
+  ]);
 
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
@@ -1513,6 +1705,7 @@ export default function Sidebar() {
 
   const handleThreadClick = useCallback(
     (event: MouseEvent, threadId: ThreadId, orderedProjectThreadIds: readonly ThreadId[]) => {
+      event.preventDefault();
       const isMac = isMacPlatform(navigator.platform);
       const isModClick = isMac ? event.metaKey : event.ctrlKey;
       const isShiftClick = event.shiftKey;
@@ -1534,15 +1727,18 @@ export default function Sidebar() {
         clearSelection();
       }
       setSelectionAnchor(threadId);
-      void navigate({
-        to: "/$threadId",
-        params: { threadId },
+      runSidebarNavigation(() => {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
       });
     },
     [
       clearSelection,
       navigate,
       rangeSelectTo,
+      runSidebarNavigation,
       selectedThreadIds.size,
       setSelectionAnchor,
       toggleThreadSelection,
@@ -1555,12 +1751,14 @@ export default function Sidebar() {
         clearSelection();
       }
       setSelectionAnchor(threadId);
-      void navigate({
-        to: "/$threadId",
-        params: { threadId },
+      runSidebarNavigation(() => {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
       });
     },
-    [clearSelection, navigate, selectedThreadIds.size, setSelectionAnchor],
+    [clearSelection, navigate, runSidebarNavigation, selectedThreadIds.size, setSelectionAnchor],
   );
 
   const handleProjectContextMenu = useCallback(
@@ -1654,8 +1852,8 @@ export default function Sidebar() {
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "rename", label: "Rename folder" },
-          { id: "clear", label: "Remove folder" },
+          { id: "rename", label: "Edit workspace" },
+          { id: "clear", label: "Remove workspace" },
         ],
         position,
       );
@@ -1676,6 +1874,7 @@ export default function Sidebar() {
       }
 
       try {
+        removeWorkspaceDefinition(groupName);
         await updateProjectsGroupMetadata(projectIds, {
           groupName: null,
           groupEmoji: null,
@@ -1683,12 +1882,12 @@ export default function Sidebar() {
       } catch (error) {
         toastManager.add({
           type: "error",
-          title: "Failed to remove folder",
+          title: "Failed to remove workspace",
           description: error instanceof Error ? error.message : "An error occurred.",
         });
       }
     },
-    [updateProjectsGroupMetadata],
+    [removeWorkspaceDefinition, updateProjectsGroupMetadata],
   );
 
   const focusThreadSearch = useCallback(() => {
@@ -1726,9 +1925,7 @@ export default function Sidebar() {
 
       const targetGroupName = decodeGroupDropId(over.id);
       if (targetGroupName !== null) {
-        const targetGroupEmoji =
-          sidebarProjects.find((project) => project.groupName === targetGroupName)?.groupEmoji ??
-          null;
+        const targetGroupEmoji = resolveWorkspaceEmojiByName(targetGroupName);
         if (
           (activeProject.groupName ?? "") === targetGroupName &&
           (activeProject.groupEmoji ?? null) === targetGroupEmoji
@@ -1756,7 +1953,13 @@ export default function Sidebar() {
       if (!overProject) return;
       reorderProjects(activeProject.id, overProject.id);
     },
-    [appSettings.sidebarProjectSortOrder, reorderProjects, sidebarProjects, updateProjectsGroupMetadata],
+    [
+      appSettings.sidebarProjectSortOrder,
+      reorderProjects,
+      resolveWorkspaceEmojiByName,
+      sidebarProjects,
+      updateProjectsGroupMetadata,
+    ],
   );
 
   const handleProjectDragStart = useCallback(
@@ -1848,6 +2051,7 @@ export default function Sidebar() {
     [appSettings.sidebarProjectSortOrder, searchVisibleThreads, sidebarProjects],
   );
   const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
+  const canDragProjects = isManualProjectSorting || workspaceOptions.length > 0;
   const renderedProjects = useMemo(
     () =>
       sortedProjects.map((project) => {
@@ -1950,9 +2154,44 @@ export default function Sidebar() {
     [pinnedProjectIdSet, renderedProjects],
   );
   const projectSections = useMemo(
-    () => groupProjectsForSidebar(unpinnedRenderedProjects),
-    [unpinnedRenderedProjects],
+    () => groupProjectsForSidebar(unpinnedRenderedProjects, workspaceDefinitions),
+    [unpinnedRenderedProjects, workspaceDefinitions],
   );
+  const autoCollapsedWorkspaceNames = useMemo(
+    () =>
+      projectSections.flatMap((section) =>
+        section.groupName !== null &&
+        section.projects.length > 0 &&
+        section.projects.every((renderedProject) => !autoExpandedProjectIdSet.has(renderedProject.project.id))
+          ? [section.groupName]
+          : [],
+      ),
+    [autoExpandedProjectIdSet, projectSections],
+  );
+
+  useEffect(() => {
+    if (hasExplicitProjectExpansionState || sidebarProjects.length === 0) {
+      return;
+    }
+    seedProjectExpansion(autoExpandedProjectIds);
+  }, [
+    autoExpandedProjectIds,
+    hasExplicitProjectExpansionState,
+    seedProjectExpansion,
+    sidebarProjects.length,
+  ]);
+
+  useEffect(() => {
+    if (hasExplicitCollapsedProjectGroupState || autoCollapsedWorkspaceNames.length === 0) {
+      return;
+    }
+    seedCollapsedProjectGroups(autoCollapsedWorkspaceNames);
+  }, [
+    autoCollapsedWorkspaceNames,
+    hasExplicitCollapsedProjectGroupState,
+    seedCollapsedProjectGroups,
+  ]);
+
   const visibleSidebarThreadIds = useMemo(
     () =>
       getVisibleSidebarThreadIds(
@@ -2135,13 +2374,13 @@ export default function Sidebar() {
       <>
         <div className="group/project-header relative">
           <SidebarMenuButton
-            ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
+            ref={canDragProjects ? dragHandleProps?.setActivatorNodeRef : undefined}
             size="sm"
-            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
-              isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+            className={`gap-3 px-3.5 py-3 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground md:gap-2 md:px-2 md:py-1.5 ${
+              canDragProjects ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
             }`}
-            {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
-            {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
+            {...(canDragProjects && dragHandleProps ? dragHandleProps.attributes : {})}
+            {...(canDragProjects && dragHandleProps ? dragHandleProps.listeners : {})}
             onPointerDownCapture={handleProjectTitlePointerDownCapture}
             onClick={(event) => handleProjectTitleClick(event, project.id)}
             onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
@@ -2158,32 +2397,32 @@ export default function Sidebar() {
               <span
                 aria-hidden="true"
                 title={projectStatus.label}
-                className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
+                className={`-ml-0.5 relative inline-flex size-5 shrink-0 items-center justify-center md:size-3.5 ${projectStatus.colorClass}`}
               >
                 <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover/project-header:opacity-0">
                   <span
-                    className={`size-[9px] rounded-full ${projectStatus.dotClass} ${
+                    className={`size-3 rounded-full md:size-[9px] ${projectStatus.dotClass} ${
                       projectStatus.pulse ? "animate-pulse" : ""
                     }`}
                   />
                 </span>
-                <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
+                <ChevronRightIcon className="absolute inset-0 m-auto size-4.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100 md:size-3.5" />
               </span>
             ) : (
               <ChevronRightIcon
-                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                className={`-ml-0.5 size-4.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 md:size-3.5 ${
                   project.expanded ? "rotate-90" : ""
                 }`}
               />
             )}
             <ProjectFavicon cwd={project.cwd} emoji={project.emoji} />
-            <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+            <span className="flex-1 truncate text-[15px] font-medium text-foreground/90 md:text-xs">
               {project.name}
             </span>
             {pinnedProjectIdSet.has(project.id) ? (
-              <PinIcon className="size-3 shrink-0 text-muted-foreground/65" />
+              <PinIcon className="size-4 shrink-0 text-muted-foreground/65 md:size-3" />
             ) : null}
-            <span className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground/70">
+            <span className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs font-medium text-muted-foreground/70 md:px-1.5 md:py-0.5 md:text-[9px]">
               {threadCount}
             </span>
           </SidebarMenuButton>
@@ -2199,7 +2438,7 @@ export default function Sidebar() {
                     />
                   }
                   showOnHover
-                  className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                  className="top-1.5 right-1.5 size-8 rounded-xl p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground md:top-1 md:size-5 md:rounded-md"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2235,7 +2474,7 @@ export default function Sidebar() {
                     });
                   }}
                 >
-                  <SquarePenIcon className="size-3.5" />
+                  <SquarePenIcon className="size-4.5 md:size-3.5" />
                 </SidebarMenuAction>
               }
             />
@@ -2247,13 +2486,13 @@ export default function Sidebar() {
 
         <SidebarMenuSub
           ref={attachThreadListAutoAnimateRef}
-          className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
+          className="mx-1.5 my-0.5 w-full translate-x-0 gap-1 overflow-hidden px-2 py-0.5 md:mx-1 md:my-0 md:gap-0.5 md:px-1.5 md:py-0"
         >
           {shouldShowThreadPanel && showEmptyThreadState ? (
             <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
               <div
                 data-thread-selection-safe
-                className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+                className="flex min-h-10 w-full translate-x-0 items-center px-3 text-left text-xs text-muted-foreground/60 md:h-6 md:min-h-0 md:px-2 md:text-[10px]"
               >
                 <span>
                   {showArchivedThreads
@@ -2302,7 +2541,7 @@ export default function Sidebar() {
                 render={<button type="button" />}
                 data-thread-selection-safe
                 size="sm"
-                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                className="h-10 w-full translate-x-0 justify-start px-3 text-left text-xs text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80 md:h-6 md:px-2 md:text-[10px]"
                 onClick={() => {
                   expandThreadListForProject(project.id);
                 }}
@@ -2320,7 +2559,7 @@ export default function Sidebar() {
                 render={<button type="button" />}
                 data-thread-selection-safe
                 size="sm"
-                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                className="h-10 w-full translate-x-0 justify-start px-3 text-left text-xs text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80 md:h-6 md:px-2 md:text-[10px]"
                 onClick={() => {
                   collapseThreadListForProject(project.id);
                 }}
@@ -2337,11 +2576,11 @@ export default function Sidebar() {
   function renderProjectList(
     sectionProjects: readonly (typeof renderedProjects)[number][],
     input: {
-      manualSorting: boolean;
+      draggable: boolean;
       attachAutoAnimateRef?: ((node: HTMLElement | null) => void) | undefined;
     },
   ) {
-    if (input.manualSorting) {
+    if (input.draggable) {
       return (
         <SidebarMenu ref={input.attachAutoAnimateRef}>
           <SortableContext
@@ -2352,6 +2591,7 @@ export default function Sidebar() {
               <SortableProjectItem
                 key={renderedProject.project.id}
                 projectId={renderedProject.project.id}
+                disabled={false}
               >
                 {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
               </SortableProjectItem>
@@ -2379,15 +2619,15 @@ export default function Sidebar() {
     const content = (
       <div ref={attachProjectListAutoAnimateRef} className="space-y-2">
         {pinnedRenderedProjects.length > 0 ? (
-          <div className="space-y-1">
-            <div className="flex items-center justify-between px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-              <span>Pinned</span>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                <span>Pinned</span>
               <span className="inline-flex items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal text-muted-foreground/70">
                 {pinnedRenderedProjects.length}
               </span>
             </div>
             {renderProjectList(pinnedRenderedProjects, {
-              manualSorting: isManualProjectSorting,
+              draggable: canDragProjects,
             })}
           </div>
         ) : null}
@@ -2395,7 +2635,7 @@ export default function Sidebar() {
         {ungroupedSection ? (
           <div>
             {renderProjectList(ungroupedSection.projects, {
-              manualSorting: isManualProjectSorting,
+              draggable: canDragProjects,
             })}
           </div>
         ) : null}
@@ -2412,12 +2652,12 @@ export default function Sidebar() {
             !containsActiveThread;
 
           return (
-            <div key={section.key} className="space-y-1">
+            <div key={section.key} className="space-y-1 rounded-xl bg-muted/18 p-1.5">
               <ProjectGroupHeader
                 collapsed={isCollapsed}
                 emoji={section.groupEmoji}
                 groupName={groupName}
-                manualSorting={isManualProjectSorting}
+                canDropProjects={canDragProjects}
                 onAddProject={() => handleStartAddProjectForGroup(groupName, section.groupEmoji)}
                 projectCount={section.projects.length}
                 onClick={() => toggleProjectGroupCollapsed(groupName)}
@@ -2435,9 +2675,15 @@ export default function Sidebar() {
                 }}
               />
               {!isCollapsed
-                ? renderProjectList(section.projects, {
-                    manualSorting: isManualProjectSorting,
-                  })
+                ? section.projects.length > 0
+                  ? renderProjectList(section.projects, {
+                      draggable: canDragProjects,
+                    })
+                  : (
+                    <div className="rounded-md border border-dashed border-border/60 bg-background/70 px-3 py-2 text-[11px] text-muted-foreground/70">
+                      No projects in this workspace yet.
+                    </div>
+                  )
                 : null}
             </div>
           );
@@ -2445,7 +2691,7 @@ export default function Sidebar() {
       </div>
     );
 
-    if (!isManualProjectSorting) {
+    if (!canDragProjects) {
       return content;
     }
 
@@ -2556,6 +2802,17 @@ export default function Sidebar() {
     : "none";
   const showArm64IntelBuildWarning =
     isElectron && shouldShowArm64IntelBuildWarning(desktopUpdateState);
+  const handleOpenSettings = useCallback(() => {
+    if (isMobile) {
+      runSidebarNavigation(() => {
+        void navigate({ to: "/settings" });
+      });
+      return;
+    }
+
+    setOpen(false);
+    void navigate({ to: "/settings" });
+  }, [isMobile, navigate, runSidebarNavigation, setOpen]);
   const arm64IntelBuildWarningDescription =
     desktopUpdateState && showArm64IntelBuildWarning
       ? getArm64IntelBuildWarningDescription(desktopUpdateState)
@@ -2679,8 +2936,17 @@ export default function Sidebar() {
           {wordmark}
         </SidebarHeader>
       ) : (
-        <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+        <SidebarHeader className="flex-row items-center justify-between gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
           {wordmark}
+          <button
+            type="button"
+            aria-label="Open settings"
+            title="Open settings"
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:size-8 md:rounded-md"
+            onClick={handleOpenSettings}
+          >
+            <SettingsIcon className="size-5 md:size-3.5" />
+          </button>
         </SidebarHeader>
       )}
 
@@ -2717,13 +2983,9 @@ export default function Sidebar() {
                 <div className="mb-2 space-y-2 rounded-lg border border-border/70 bg-secondary/40 p-2">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground/90">
-                        {isAddingWorkspace ? "New workspace" : "New project"}
-                      </p>
+                      <p className="text-xs font-medium text-foreground/90">New project</p>
                       <p className="text-[10px] text-muted-foreground/70">
-                        {isAddingWorkspace
-                          ? "Create a workspace by adding its first project."
-                          : `Add a project to ${addProjectDraft.groupName}.`}
+                        {`Add a project to ${addProjectDraft.groupName}.`}
                       </p>
                     </div>
                     <button
@@ -2740,43 +3002,14 @@ export default function Sidebar() {
                     </button>
                   </div>
 
-                  {isAddingWorkspace ? (
-                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_88px]">
-                      <input
-                        className="min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                        placeholder="Workspace name"
-                        autoFocus
-                        value={addProjectDraft.groupName}
-                        onChange={(event) => {
-                          setAddProjectDraft((current) =>
-                            current ? { ...current, groupName: event.target.value } : current,
-                          );
-                          setAddProjectError(null);
-                        }}
-                      />
-                      <input
-                        className="min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                        placeholder="Emoji"
-                        maxLength={16}
-                        value={addProjectDraft.groupEmoji}
-                        onChange={(event) => {
-                          setAddProjectDraft((current) =>
-                            current ? { ...current, groupEmoji: event.target.value } : current,
-                          );
-                          setAddProjectError(null);
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
-                      {addProjectDraft.groupEmoji ? (
-                        <span className="text-sm leading-none">{addProjectDraft.groupEmoji}</span>
-                      ) : (
-                        <FolderIcon className="size-3.5" />
-                      )}
-                      <span className="truncate">{addProjectDraft.groupName}</span>
-                    </div>
-                  )}
+                  <div className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                    {addProjectDraft.groupEmoji ? (
+                      <span className="text-sm leading-none">{addProjectDraft.groupEmoji}</span>
+                    ) : (
+                      <FolderIcon className="size-3.5" />
+                    )}
+                    <span className="truncate">{addProjectDraft.groupName}</span>
+                  </div>
 
                   {isElectron && (
                     <button
@@ -2811,7 +3044,7 @@ export default function Sidebar() {
                           setNewCwd("");
                         }
                       }}
-                      autoFocus={!isAddingWorkspace}
+                      autoFocus
                     />
                     <button
                       type="button"
@@ -2819,11 +3052,7 @@ export default function Sidebar() {
                       onClick={handleAddProject}
                       disabled={!canAddProject}
                     >
-                      {isAddingProject
-                        ? "Adding..."
-                        : isAddingWorkspace
-                          ? "Add workspace"
-                          : "Add project"}
+                      {isAddingProject ? "Adding..." : "Add project"}
                     </button>
                   </div>
                   {addProjectError && (
@@ -2849,16 +3078,16 @@ export default function Sidebar() {
                     }}
                     placeholder="Search"
                     disabled={projects.length === 0}
-                    className="h-8 border-border bg-secondary pr-8 pl-8 text-xs disabled:cursor-default disabled:opacity-60"
+                    className="h-11 rounded-xl border-border bg-secondary pr-10 pl-10 text-[17px] md:h-8 md:rounded-md md:pr-8 md:pl-8 md:text-sm disabled:cursor-default disabled:opacity-60"
                   />
                   {threadSearchQuery.length > 0 ? (
                     <button
                       type="button"
                       aria-label="Clear thread search"
-                      className="absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      className="absolute top-1/2 right-1.5 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground md:size-5 md:rounded-md"
                       onClick={() => setThreadSearchQuery("")}
                     >
-                      <XIcon className="size-3.5" />
+                      <XIcon className="size-4 md:size-3.5" />
                     </button>
                   ) : null}
                 </div>
@@ -2867,27 +3096,20 @@ export default function Sidebar() {
                     render={
                       <button
                         type="button"
-                        aria-label={isAddingWorkspace ? "Cancel add workspace" : "Add workspace"}
-                        aria-pressed={isAddingWorkspace}
-                        className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-secondary text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                        onClick={handleStartAddWorkspace}
+                        aria-label="Add workspace"
+                        className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-border bg-secondary text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground md:size-8 md:rounded-md"
+                        onClick={() => handleStartAddWorkspace()}
                       />
                     }
                   >
-                    {isAddingWorkspace ? (
-                      <XIcon className="size-3.5" />
-                    ) : (
-                      <FolderPlusIcon className="size-3.5" />
-                    )}
+                    <FolderPlusIcon className="size-4.5 md:size-3.5" />
                   </TooltipTrigger>
-                  <TooltipPopup side="right">
-                    {isAddingWorkspace ? "Cancel add workspace" : "Add workspace"}
-                  </TooltipPopup>
+                  <TooltipPopup side="right">Add workspace</TooltipPopup>
                 </Tooltip>
                 {archivedThreadCount > 0 ? (
                   <button
                     type="button"
-                    className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[10px] font-medium transition-colors ${
+                    className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border px-3 text-xs font-medium transition-colors md:h-8 md:gap-1.5 md:rounded-md md:px-2 md:text-[10px] ${
                       showArchivedThreads
                         ? "border-primary/30 bg-primary/10 text-foreground"
                         : "border-border bg-secondary text-muted-foreground/70 hover:bg-accent hover:text-foreground"
@@ -2895,12 +3117,12 @@ export default function Sidebar() {
                     onClick={() => setShowArchivedThreads(!showArchivedThreads)}
                   >
                     {showArchivedThreads ? (
-                      <ArchiveXIcon className="size-3.5" />
+                      <ArchiveXIcon className="size-4 md:size-3.5" />
                     ) : (
-                      <ArchiveIcon className="size-3.5" />
+                      <ArchiveIcon className="size-4 md:size-3.5" />
                     )}
                     <span>{showArchivedThreads ? "Hide archived" : "Show archived"}</span>
-                    <span className="inline-flex items-center rounded-full border border-border/70 bg-background/70 px-1 py-0.5 text-[9px] leading-none text-muted-foreground/70">
+                    <span className="inline-flex items-center rounded-full border border-border/70 bg-background/70 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground/70 md:px-1 md:text-[9px]">
                       {archivedThreadCount}
                     </span>
                   </button>
@@ -2929,16 +3151,18 @@ export default function Sidebar() {
             <SidebarUpdatePill />
             <div className="flex items-center justify-between gap-2">
               <SidebarMenu className="min-w-0 flex-1">
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    size="sm"
-                    className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                    onClick={() => void navigate({ to: "/settings" })}
-                  >
-                    <SettingsIcon className="size-3.5" />
-                    <span className="text-xs">Settings</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                {isElectron ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      size="sm"
+                      className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                      onClick={handleOpenSettings}
+                    >
+                      <SettingsIcon className="size-3.5" />
+                      <span className="text-xs">Settings</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
               </SidebarMenu>
               <SidebarTrigger
                 aria-label="Collapse sidebar"
@@ -2951,9 +3175,69 @@ export default function Sidebar() {
       )}
 
       <Dialog
-        open={editingProject !== null}
+        open={workspaceCreateDraft !== null}
         onOpenChange={(open) => {
-          if (!open && !isSavingProjectEdit) {
+          if (!open) {
+            setWorkspaceCreateDraft(null);
+          }
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Create Workspace</DialogTitle>
+            <DialogDescription>
+              {workspaceCreateDraft?.applyToProjectId
+                ? "Create a workspace for this project, or keep it empty and move more projects into it later."
+                : "Add an empty workspace now and move projects into it whenever you are ready."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            <Field>
+              <FieldLabel>Workspace name</FieldLabel>
+              <Input
+                value={workspaceCreateDraft?.name ?? ""}
+                onChange={(event) =>
+                  setWorkspaceCreateDraft((current) =>
+                    current ? { ...current, name: event.target.value } : current,
+                  )
+                }
+                placeholder="Client work"
+                maxLength={64}
+                autoFocus
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Workspace emoji</FieldLabel>
+              <Input
+                value={workspaceCreateDraft?.emoji ?? ""}
+                onChange={(event) =>
+                  setWorkspaceCreateDraft((current) =>
+                    current ? { ...current, emoji: event.target.value } : current,
+                  )
+                }
+                placeholder="🗂️"
+                maxLength={16}
+              />
+              <FieldDescription>
+                Optional. This shows on the workspace header in the sidebar.
+              </FieldDescription>
+            </Field>
+          </DialogPanel>
+          <DialogFooter variant="bare">
+            <Button variant="outline" onClick={() => setWorkspaceCreateDraft(null)}>
+              Cancel
+            </Button>
+            <Button onClick={createWorkspace}>
+              {workspaceCreateDraft?.applyToProjectId ? "Create and select" : "Create workspace"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
+        open={editingProject !== null && workspaceCreateDraft === null}
+        onOpenChange={(open) => {
+          if (!open && !isSavingProjectEdit && workspaceCreateDraft === null) {
             setEditingProject(null);
           }
         }}
@@ -2993,19 +3277,86 @@ export default function Sidebar() {
               <FieldDescription>Optional. Shown before the project name.</FieldDescription>
             </Field>
             <Field>
-              <FieldLabel>Folder</FieldLabel>
-              <Input
-                value={editingProject?.groupName ?? ""}
-                onChange={(event) =>
-                  setEditingProject((current) =>
-                    current ? { ...current, groupName: event.target.value } : current,
-                  )
+              <FieldLabel>Workspace</FieldLabel>
+              <Select
+                value={
+                  editingProject?.groupName
+                    ? editingProject.groupName
+                    : PROJECT_WORKSPACE_NONE_VALUE
                 }
-                placeholder="Client work"
-                maxLength={64}
-              />
+                onValueChange={(value) => {
+                  const nextWorkspaceValue =
+                    typeof value === "string" ? value : PROJECT_WORKSPACE_NONE_VALUE;
+
+                  if (nextWorkspaceValue === PROJECT_WORKSPACE_CREATE_VALUE) {
+                    handleStartAddWorkspace(
+                      editingProject?.projectId
+                        ? { applyToProjectId: editingProject.projectId }
+                        : undefined,
+                    );
+                    return;
+                  }
+
+                  setEditingProject((current) =>
+                    current
+                      ? {
+                          ...current,
+                          groupName:
+                            nextWorkspaceValue === PROJECT_WORKSPACE_NONE_VALUE
+                              ? ""
+                              : nextWorkspaceValue,
+                        }
+                      : current,
+                  );
+                }}
+              >
+                <SelectTrigger className="w-full" aria-label="Workspace">
+                  <SelectValue>
+                    {editingProject?.groupName ? (
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        {resolveWorkspaceEmojiByName(editingProject.groupName) ? (
+                          <span className="text-sm leading-none">
+                            {resolveWorkspaceEmojiByName(editingProject.groupName)}
+                          </span>
+                        ) : (
+                          <FolderIcon className="size-3.5 text-muted-foreground/70" />
+                        )}
+                        <span className="truncate">{editingProject.groupName}</span>
+                      </span>
+                    ) : (
+                      "No workspace"
+                    )}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="start" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value={PROJECT_WORKSPACE_NONE_VALUE}>
+                    <span className="inline-flex items-center gap-2">
+                      <XIcon className="size-3.5 text-muted-foreground/70" />
+                      <span>No workspace</span>
+                    </span>
+                  </SelectItem>
+                  {workspaceOptions.map((workspace) => (
+                    <SelectItem hideIndicator key={workspace.name} value={workspace.name}>
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        {workspace.emoji ? (
+                          <span className="text-sm leading-none">{workspace.emoji}</span>
+                        ) : (
+                          <FolderIcon className="size-3.5 text-muted-foreground/70" />
+                        )}
+                        <span className="truncate">{workspace.name}</span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                  <SelectItem hideIndicator value={PROJECT_WORKSPACE_CREATE_VALUE}>
+                    <span className="inline-flex items-center gap-2 font-medium text-foreground">
+                      <FolderPlusIcon className="size-3.5" />
+                      <span>Create new workspace...</span>
+                    </span>
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
               <FieldDescription>
-                Projects with the same folder name are grouped together in the sidebar.
+                Choose an existing workspace, leave it top-level, or create a new workspace.
               </FieldDescription>
             </Field>
           </DialogPanel>
@@ -3034,14 +3385,14 @@ export default function Sidebar() {
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>Rename Folder</DialogTitle>
+            <DialogTitle>Edit Workspace</DialogTitle>
             <DialogDescription>
-              Update the shared folder name for these projects.
+              Update the shared workspace name and emoji for these projects.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
             <Field>
-              <FieldLabel>Folder name</FieldLabel>
+              <FieldLabel>Workspace name</FieldLabel>
               <Input
                 value={editingProjectGroup?.nextName ?? ""}
                 onChange={(event) =>
@@ -3053,11 +3404,11 @@ export default function Sidebar() {
                 maxLength={64}
               />
               <FieldDescription>
-                Clear the field to remove the folder and leave the projects ungrouped.
+                Clear the field to remove the workspace and leave the projects ungrouped.
               </FieldDescription>
             </Field>
             <Field>
-              <FieldLabel>Folder emoji</FieldLabel>
+              <FieldLabel>Workspace emoji</FieldLabel>
               <Input
                 value={editingProjectGroup?.nextEmoji ?? ""}
                 onChange={(event) =>
@@ -3069,7 +3420,7 @@ export default function Sidebar() {
                 maxLength={16}
               />
               <FieldDescription>
-                Optional. Shown on the folder header and shared by that workspace.
+                Optional. Shown on the workspace header and shared by that workspace.
               </FieldDescription>
             </Field>
           </DialogPanel>

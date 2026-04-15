@@ -19,6 +19,8 @@ import { toastManager } from "./ui/toast";
 import { getWsRpcClient } from "~/wsRpcClient";
 
 const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
+const INITIAL_CONNECT_BLOCKING_GRACE_MS = 2_500;
+const BACKGROUND_RESUME_UI_GRACE_MS = 8_000;
 type WsAutoReconnectTrigger = "focus" | "online";
 
 const connectionTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -111,6 +113,34 @@ export function shouldAutoReconnect(
     status.hasConnected &&
     (uiState === "reconnecting" || status.reconnectPhase === "exhausted")
   );
+}
+
+export function shouldSuppressReconnectUi(input: {
+  readonly hasConnected: boolean;
+  readonly hidden: boolean;
+  readonly nowMs: number;
+  readonly lastForegroundResumeAtMs: number;
+}): boolean {
+  if (!input.hasConnected) {
+    return false;
+  }
+
+  if (input.hidden) {
+    return true;
+  }
+
+  if (input.lastForegroundResumeAtMs <= 0) {
+    return false;
+  }
+
+  return input.nowMs - input.lastForegroundResumeAtMs < BACKGROUND_RESUME_UI_GRACE_MS;
+}
+
+export function shouldBlockInitialConnectionUi(input: {
+  readonly hasServerConfig: boolean;
+  readonly waitingForGracePeriod: boolean;
+}): boolean {
+  return !input.hasServerConfig && !input.waitingForGracePeriod;
 }
 
 function buildBlockingCopy(
@@ -266,6 +296,7 @@ export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const lastForcedReconnectAtRef = useRef(0);
+  const lastForegroundResumeAtRef = useRef(0);
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const toastResetTimerRef = useRef<number | null>(null);
   const previousUiStateRef = useRef<WsConnectionUiState>(getWsConnectionUiState(status));
@@ -320,6 +351,14 @@ export function WebSocketConnectionCoordinator() {
       triggerAutoReconnect("online");
     };
     const handleFocus = () => {
+      lastForegroundResumeAtRef.current = Date.now();
+      triggerAutoReconnect("focus");
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      lastForegroundResumeAtRef.current = Date.now();
       triggerAutoReconnect("focus");
     };
 
@@ -327,10 +366,12 @@ export function WebSocketConnectionCoordinator() {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", syncBrowserOnlineStatus);
     window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", syncBrowserOnlineStatus);
       window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -380,9 +421,18 @@ export function WebSocketConnectionCoordinator() {
     const uiState = getWsConnectionUiState(status);
     const previousUiState = previousUiStateRef.current;
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
-    const shouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
-    const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
-    const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
+    const reconnectUiSuppressed = shouldSuppressReconnectUi({
+      hasConnected: status.hasConnected,
+      hidden: typeof document !== "undefined" && document.visibilityState !== "visible",
+      nowMs,
+      lastForegroundResumeAtMs: lastForegroundResumeAtRef.current,
+    });
+    const shouldShowReconnectToast =
+      !reconnectUiSuppressed && status.hasConnected && uiState === "reconnecting";
+    const shouldShowOfflineToast =
+      !reconnectUiSuppressed && uiState === "offline" && status.disconnectedAt !== null;
+    const shouldShowExhaustedToast =
+      !reconnectUiSuppressed && status.hasConnected && status.reconnectPhase === "exhausted";
 
     if (
       toastResetTimerRef.current !== null &&
@@ -445,6 +495,7 @@ export function WebSocketConnectionCoordinator() {
     }
 
     if (
+      !reconnectUiSuppressed &&
       uiState === "connected" &&
       (previousUiState === "offline" || previousUiState === "reconnecting") &&
       previousDisconnectedAt !== null
@@ -529,8 +580,29 @@ export function SlowRpcAckToastCoordinator() {
 export function WebSocketConnectionSurface({ children }: { readonly children: ReactNode }) {
   const serverConfig = useServerConfig();
   const status = useWsConnectionStatus();
+  const [initialConnectUiReady, setInitialConnectUiReady] = useState(serverConfig !== null);
 
-  if (serverConfig === null) {
+  useEffect(() => {
+    if (serverConfig !== null) {
+      setInitialConnectUiReady(true);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setInitialConnectUiReady(true);
+    }, INITIAL_CONNECT_BLOCKING_GRACE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [serverConfig]);
+
+  if (
+    shouldBlockInitialConnectionUi({
+      hasServerConfig: serverConfig !== null,
+      waitingForGracePeriod: !initialConnectUiReady,
+    })
+  ) {
     const uiState = getWsConnectionUiState(status);
     return (
       <WebSocketBlockingState

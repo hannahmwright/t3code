@@ -7,7 +7,7 @@ This is the deployment path for a real installable T3 Code PWA with background w
 - Run the built T3 server locally on this Mac.
 - Keep it bound to `127.0.0.1:3773`.
 - Put `t3.thewrighthome.app` in front of it with Cloudflare.
-- Keep Cloudflare Access in front of the hostname if you still want Google login protection.
+- Use T3's built-in username/password session flow for app-native auth instead of Cloudflare Access.
 
 That gives the app:
 
@@ -18,14 +18,7 @@ That gives the app:
 
 ## Current hostname state
 
-As of 2026-04-06:
-
-- `t3.thewrighthome.app` is currently behind Cloudflare Access
-- the active Cloudflare tunnel appears to be `thewrighthome`
-- the active connector for that tunnel is a Windows machine, not this Mac
-- this Mac only has credentials/config for the separate `maestro-codex` tunnel
-
-That means the old `t3.thewrighthome.app` routing is not controlled by the current local `~/.cloudflared/config.yml`.
+As of 2026-04-06, the goal is for `t3.thewrighthome.app` to go straight to this Mac through Cloudflare Tunnel, with authentication handled inside T3 itself.
 
 ## Local server env
 
@@ -38,6 +31,9 @@ cp .env.remote.example .env.remote.local
 Fill in:
 
 - `T3CODE_AUTH_TOKEN`
+- `T3CODE_APP_AUTH_USERNAME`
+- `T3CODE_APP_AUTH_PASSWORD`
+- `T3CODE_APP_AUTH_SESSION_SECRET` (optional, but recommended)
 - `T3CODE_VAPID_PUBLIC_KEY`
 - `T3CODE_VAPID_PRIVATE_KEY`
 - `T3CODE_VAPID_SUBJECT`
@@ -59,15 +55,11 @@ By default this script:
 
 To reuse `t3.thewrighthome.app`, repoint that hostname so it reaches `http://127.0.0.1:3773` on the machine running T3.
 
-There are two realistic paths:
-
-1. Reuse the existing `thewrighthome` tunnel in the Cloudflare dashboard.
-2. Move `t3.thewrighthome.app` onto a tunnel that this Mac actually controls.
-
-Because this Mac does not currently have credentials for the `thewrighthome` tunnel, the dashboard is the cleanest place to change the hostname mapping.
+The hostname should keep using Cloudflare Tunnel for HTTPS transport, but Cloudflare Access should be removed from the request path so the installed PWA stays inside the app during login.
 
 ## Notes
 
 - Tailscale can still be used as a direct fallback path.
 - PWA installability and background push are only expected to work reliably on the HTTPS hostname.
-- The T3 server still needs `T3CODE_AUTH_TOKEN` even when Cloudflare is in front of it.
+- The T3 server still needs `T3CODE_AUTH_TOKEN` for non-session server auth and bootstrap use.
+- Built-in app auth is device/session-based and works best when the browser reaches the app directly on the same origin.

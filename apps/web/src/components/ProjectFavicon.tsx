@@ -17,7 +17,7 @@ export function ProjectFavicon({
     return (
       <span
         aria-hidden="true"
-        className={`inline-flex size-3.5 shrink-0 items-center justify-center text-sm leading-none ${className ?? ""}`}
+        className={`inline-flex size-4.5 shrink-0 items-center justify-center text-base leading-none md:size-3.5 md:text-sm ${className ?? ""}`}
       >
         {emoji}
       </span>
@@ -36,12 +36,14 @@ export function ProjectFavicon({
   return (
     <>
       {status !== "loaded" ? (
-        <FolderIcon className={`size-3.5 shrink-0 text-muted-foreground/50 ${className ?? ""}`} />
+        <FolderIcon
+          className={`size-4.5 shrink-0 text-muted-foreground/50 md:size-3.5 ${className ?? ""}`}
+        />
       ) : null}
       <img
         src={src}
         alt=""
-        className={`size-3.5 shrink-0 rounded-sm object-contain ${status === "loaded" ? "" : "hidden"} ${className ?? ""}`}
+        className={`size-4.5 shrink-0 rounded-sm object-contain md:size-3.5 ${status === "loaded" ? "" : "hidden"} ${className ?? ""}`}
         onLoad={() => {
           loadedProjectFaviconSrcs.add(src);
           setStatus("loaded");

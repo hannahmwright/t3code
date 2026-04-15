@@ -2,7 +2,7 @@ import { RotateCcwIcon } from "lucide-react";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { useSettingsRestore } from "../components/settings/useSettingsRestore";
 import { Button } from "../components/ui/button";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { isElectron } from "../env";
@@ -29,12 +29,12 @@ function SettingsContentLayout() {
   }, []);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate max-md:min-h-[var(--app-shell-height)] md:h-dvh">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         {!isElectron && (
-          <header className="border-b border-border px-3 py-2 sm:px-5">
+          <header className="border-b border-border px-3 py-2 sm:px-5 max-md:sticky max-md:top-0 max-md:z-30 max-md:bg-background/92 max-md:px-3 max-md:pt-[calc(env(safe-area-inset-top)+0.5rem)] max-md:pb-3 max-md:backdrop-blur-xl">
             <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+              <SidebarTrigger className="size-11 shrink-0 rounded-full border border-border/70 bg-background/85 shadow-sm md:hidden" />
               <span className="text-sm font-medium text-foreground">Settings</span>
               <div className="ms-auto flex items-center gap-2">
                 <Button

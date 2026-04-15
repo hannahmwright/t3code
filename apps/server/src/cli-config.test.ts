@@ -20,6 +20,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
   } as const;
+  const defaultAppAuthConfig = {
+    appAuthEnabled: false,
+    appAuthUsername: undefined,
+    appAuthPassword: undefined,
+    appAuthSessionSecret: undefined,
+    appAuthSessionTtlDays: 30,
+  } as const;
 
   const openBootstrapFd = Effect.fn(function* (payload: Record<string, unknown>) {
     const fs = yield* FileSystem.FileSystem;
@@ -86,6 +93,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:5173"),
         noBrowser: true,
         authToken: "env-token",
+        ...defaultAppAuthConfig,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
       });
@@ -149,6 +157,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: true,
         authToken: "flag-token",
+        ...defaultAppAuthConfig,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
       });
@@ -219,6 +228,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:5173"),
         noBrowser: true,
         authToken: "bootstrap-token",
+        ...defaultAppAuthConfig,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
       });
@@ -339,6 +349,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: true,
         authToken: "flag-token",
+        ...defaultAppAuthConfig,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
       });
@@ -403,6 +414,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: undefined,
         noBrowser: true,
         authToken: undefined,
+        ...defaultAppAuthConfig,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
       });

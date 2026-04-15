@@ -2,7 +2,6 @@ import { ThreadId } from "@t3tools/contracts";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect, useState } from "react";
 
-import ChatView from "../components/ChatView";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
   DiffPanelHeaderSkeleton,
@@ -21,6 +20,7 @@ import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
+const ChatView = lazy(() => import("../components/ChatView"));
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
@@ -71,6 +71,28 @@ const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
     </DiffWorkerPoolProvider>
   );
 };
+
+function ChatViewFallback() {
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-background">
+      <div className="h-[52px] shrink-0 border-b border-border bg-background/90" />
+      <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 py-5 sm:px-6">
+        <div className="h-5 w-40 animate-pulse rounded bg-muted/70" />
+        <div className="h-24 w-full animate-pulse rounded-2xl bg-muted/60" />
+        <div className="ms-auto h-20 w-[72%] animate-pulse rounded-2xl bg-muted/50" />
+        <div className="h-28 w-[82%] animate-pulse rounded-2xl bg-muted/55" />
+      </div>
+    </div>
+  );
+}
+
+function LazyChatView(props: { threadId: ThreadId }) {
+  return (
+    <Suspense fallback={<ChatViewFallback />}>
+      <ChatView threadId={props.threadId} />
+    </Suspense>
+  );
+}
 
 const DiffPanelInlineSidebar = (props: {
   diffOpen: boolean;
@@ -220,11 +242,11 @@ function ChatThreadRouteView() {
 
   if (!shouldUseDiffSheet) {
     return (
-      <>
-        <SidebarInset className="h-dvh  min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-          <ChatView threadId={threadId} />
-        </SidebarInset>
-        <DiffPanelInlineSidebar
+        <>
+          <SidebarInset className="min-h-0 bg-background text-foreground max-md:min-h-[var(--app-shell-height)] max-md:overflow-visible max-md:overscroll-y-auto md:h-dvh md:overflow-hidden md:overscroll-y-none">
+            <LazyChatView threadId={threadId} />
+          </SidebarInset>
+          <DiffPanelInlineSidebar
           diffOpen={diffOpen}
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}
@@ -236,8 +258,8 @@ function ChatThreadRouteView() {
 
   return (
     <>
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-        <ChatView threadId={threadId} />
+      <SidebarInset className="min-h-0 bg-background text-foreground max-md:min-h-[var(--app-shell-height)] max-md:overflow-visible max-md:overscroll-y-auto md:h-dvh md:overflow-hidden md:overscroll-y-none">
+        <LazyChatView threadId={threadId} />
       </SidebarInset>
       <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
         {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}

@@ -299,6 +299,11 @@ const buildAppUnderTest = (options?: {
       vapidPublicKey: undefined,
       vapidPrivateKey: undefined,
       vapidSubject: undefined,
+      appAuthEnabled: false,
+      appAuthUsername: undefined,
+      appAuthPassword: undefined,
+      appAuthSessionSecret: undefined,
+      appAuthSessionTtlDays: 30,
       mode: "web",
       port: 0,
       host: "127.0.0.1",
@@ -516,6 +521,44 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assert.include(body, "router-auth-ok");
       assert.include(body, 'window.__T3_WS_TOKEN="secret-token"');
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("sets a persistent app auth cookie expiration near the configured ttl", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          authToken: "secret-token",
+          appAuthEnabled: true,
+          appAuthUsername: "hannah",
+          appAuthPassword: "super-secret",
+          appAuthSessionTtlDays: 30,
+        },
+      });
+
+      const url = yield* getHttpServerUrl("/api/auth/login");
+      const requestStartedAt = Date.now();
+      const response = yield* Effect.promise(() =>
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            username: "hannah",
+            password: "super-secret",
+            remember: true,
+          }),
+        }),
+      );
+
+      assert.equal(response.status, 200);
+      const setCookie = response.headers.get("set-cookie") ?? "";
+      assertInclude(setCookie, "Expires=");
+      const expiresMatch = setCookie.match(/Expires=([^;]+)/i);
+      assert.isNotNull(expiresMatch);
+      const expiresAt = Date.parse(expiresMatch[1]!);
+      assert.isAtLeast(expiresAt - requestStartedAt, 29 * 24 * 60 * 60 * 1000);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -994,6 +1037,43 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         config: {
           authToken: "secret-token",
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws?token=secret-token");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsSearchEntries]({
+            cwd: workspaceDir,
+            query: "needle",
+            limit: 10,
+          }),
+        ),
+      );
+
+      assert.isAtLeast(response.entries.length, 1);
+      assert.equal(response.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("accepts websocket rpc handshake with auth token when app auth is also enabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-auth-token-with-app-auth-",
+      });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, "needle-file.ts"),
+        "export const needle = 1;",
+      );
+
+      yield* buildAppUnderTest({
+        config: {
+          authToken: "secret-token",
+          appAuthEnabled: true,
+          appAuthUsername: "hannah",
+          appAuthPassword: "super-secret",
         },
       });
 

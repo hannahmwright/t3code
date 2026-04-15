@@ -35,7 +35,7 @@ describe("requestLatencyState", () => {
   });
 
   it("clears the slow request once the server acknowledges it", () => {
-    trackRpcRequestSent("1", "git.status");
+    trackRpcRequestSent("1", "server.getConfig");
     vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS);
     expect(getSlowRpcAckRequests()).toHaveLength(1);
 
@@ -45,6 +45,14 @@ describe("requestLatencyState", () => {
 
   it("ignores long-lived subscribe requests", () => {
     trackRpcRequestSent("1", "subscribeServerConfig");
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+  });
+
+  it("ignores passive git status requests", () => {
+    trackRpcRequestSent("1", "git.status");
+    trackRpcRequestSent("2", "git.refreshStatus");
     vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
 
     expect(getSlowRpcAckRequests()).toEqual([]);

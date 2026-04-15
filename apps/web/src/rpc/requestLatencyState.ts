@@ -36,7 +36,18 @@ function getSlowRpcAckRequestsValue(): ReadonlyArray<SlowRpcAckRequest> {
 }
 
 function shouldTrackRpcAck(tag: string): boolean {
-  return !tag.startsWith("subscribe");
+  if (tag.startsWith("subscribe")) {
+    return false;
+  }
+
+  // Background git status lookups can legitimately take a while and are
+  // triggered passively by the UI, especially in the sidebar. They should not
+  // surface as a blocking "requests are slow" warning.
+  if (tag === "git.status" || tag === "git.refreshStatus" || tag.startsWith("git.status.")) {
+    return false;
+  }
+
+  return true;
 }
 
 export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {

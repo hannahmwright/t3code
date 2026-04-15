@@ -7,18 +7,29 @@ import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
 import { isElectron } from "./env";
-import { initializePwa } from "./pwa";
+import { readBootstrapCache } from "./bootstrapCache";
+import { initializePwa, migrateStandalonePathToHashRoute, shouldUseHashRouting } from "./pwa";
+import { setServerConfigSnapshot } from "./rpc/serverState";
 import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
+import { hydrateShellBootstrapState, useStore } from "./store";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-const history = isElectron ? createHashHistory() : createBrowserHistory();
-
-const router = getRouter(history);
-
 document.title = APP_DISPLAY_NAME;
 
 initializePwa();
+migrateStandalonePathToHashRoute();
+
+const cachedBootstrap = readBootstrapCache();
+if (cachedBootstrap?.serverConfig) {
+  setServerConfigSnapshot(cachedBootstrap.serverConfig);
+}
+if (cachedBootstrap?.shellState) {
+  useStore.setState((state) => hydrateShellBootstrapState(state, cachedBootstrap.shellState));
+}
+
+const history = isElectron || shouldUseHashRouting() ? createHashHistory() : createBrowserHistory();
+const router = getRouter(history);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

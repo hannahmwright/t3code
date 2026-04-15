@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 
 import { isElectron } from "./env";
 
-const SERVICE_WORKER_URL = "/sw.js";
+const SERVICE_WORKER_URL = "/sw.js?v=3";
 
 interface BeforeInstallPromptEvent extends Event {
   readonly platforms: ReadonlyArray<string>;
@@ -23,6 +23,7 @@ export interface PwaInstallState {
 let initialized = false;
 let installPromptEvent: BeforeInstallPromptEvent | null = null;
 const listeners = new Set<() => void>();
+let cachedInstallState: PwaInstallState | null = null;
 
 function notifyListeners() {
   for (const listener of listeners) {
@@ -57,6 +58,37 @@ function isStandaloneDisplayMode() {
   );
 }
 
+export function isPwaStandalone() {
+  return isStandaloneDisplayMode();
+}
+
+export function shouldUseHashRouting() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return isStandaloneDisplayMode() || window.location.hash.startsWith("#/");
+}
+
+export function migrateStandalonePathToHashRoute() {
+  if (typeof window === "undefined" || !isStandaloneDisplayMode()) {
+    return false;
+  }
+
+  if (window.location.hash.startsWith("#/")) {
+    return false;
+  }
+
+  const { origin, pathname, search, hash } = window.location;
+  if (pathname === "/" && search.length === 0 && hash.length === 0) {
+    return false;
+  }
+
+  const nextHashPath = `${pathname}${search}${hash}` || "/";
+  window.history.replaceState(window.history.state, "", `${origin}/#${nextHashPath}`);
+  return false;
+}
+
 function isIosSafariLike() {
   if (typeof navigator === "undefined") {
     return false;
@@ -66,7 +98,7 @@ function isIosSafariLike() {
   return /iPhone|iPad|iPod/i.test(userAgent) && /Safari/i.test(userAgent);
 }
 
-export function getPwaInstallState(): PwaInstallState {
+function computePwaInstallState(): PwaInstallState {
   const supported = typeof window !== "undefined" && !isElectron;
   const isStandalone = isStandaloneDisplayMode();
   const showIosInstallHint =
@@ -78,6 +110,22 @@ export function getPwaInstallState(): PwaInstallState {
     isStandalone,
     showIosInstallHint,
   };
+}
+
+export function getPwaInstallState(): PwaInstallState {
+  const nextState = computePwaInstallState();
+  if (
+    cachedInstallState &&
+    cachedInstallState.supported === nextState.supported &&
+    cachedInstallState.canPrompt === nextState.canPrompt &&
+    cachedInstallState.isStandalone === nextState.isStandalone &&
+    cachedInstallState.showIosInstallHint === nextState.showIosInstallHint
+  ) {
+    return cachedInstallState;
+  }
+
+  cachedInstallState = nextState;
+  return nextState;
 }
 
 export function subscribeToPwaInstallState(listener: () => void) {

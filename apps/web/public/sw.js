@@ -1,4 +1,4 @@
-const CACHE_NAME = "t3code-shell-v1";
+const CACHE_NAME = "t3code-shell-v4";
 const APP_SHELL_PATHS = [
   "/",
   "/manifest.webmanifest",
@@ -8,6 +8,25 @@ const APP_SHELL_PATHS = [
   "/icon-192.png",
   "/icon-512.png",
 ];
+
+async function cacheResponse(cache, request, response) {
+  if (!response || !response.ok) {
+    return response;
+  }
+
+  await cache.put(request, response.clone());
+  return response;
+}
+
+async function updateNavigationCache(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const response = await fetch(request);
+  await cacheResponse(cache, request, response);
+  if (new URL(request.url).pathname !== "/") {
+    await cacheResponse(cache, "/", response);
+  }
+  return response;
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -40,41 +59,54 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (url.pathname.startsWith("/api/") || url.pathname === "/ws") {
+    return;
+  }
+
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            void caches.open(CACHE_NAME).then((cache) => cache.put("/", clone));
-          }
-          return response;
-        })
-        .catch(async () => {
-          const cachedResponse = await caches.match(request);
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          return caches.match("/") || Response.error();
-        }),
+      (async () => {
+        const cache = await caches.open(CACHE_NAME);
+        const cachedResponse = (await cache.match(request)) || (await cache.match("/"));
+        const networkRefresh = updateNavigationCache(request).catch(() => null);
+
+        if (cachedResponse) {
+          void networkRefresh;
+          return cachedResponse;
+        }
+
+        const networkResponse = await networkRefresh;
+        if (networkResponse) {
+          return networkResponse;
+        }
+
+        return Response.error();
+      })(),
     );
     return;
   }
 
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cachedResponse = await cache.match(request);
+      const shouldCacheAsset = url.pathname.startsWith("/assets/");
+
       if (cachedResponse) {
+        if (shouldCacheAsset) {
+          void fetch(request)
+            .then((response) => cacheResponse(cache, request, response))
+            .catch(() => null);
+        }
         return cachedResponse;
       }
 
-      return fetch(request).then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          void caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        }
-        return response;
-      });
-    }),
+      const response = await fetch(request);
+      if (shouldCacheAsset) {
+        await cacheResponse(cache, request, response);
+      }
+      return response;
+    })(),
   );
 });
 

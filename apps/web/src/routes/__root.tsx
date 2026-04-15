@@ -10,18 +10,22 @@ import {
   useNavigate,
   useLocation,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef } from "react";
+import { Suspense, lazy, useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
-import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { persistReadModelToBootstrapCache } from "../bootstrapCache";
+import { isElectron } from "../env";
 import {
   SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
   WebSocketConnectionSurface,
 } from "../components/WebSocketConnectionSurface";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
@@ -50,6 +54,18 @@ import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery
 import { deriveReplayRetryDecision } from "../orchestrationRecovery";
 import { getWsRpcClient } from "~/wsRpcClient";
 import { getOrCreateInstallationId } from "../notifications";
+import {
+  refreshAppAuthStatus,
+  shouldWaitForDesktopAuthService,
+  signInWithPassword,
+  useAppAuthStatus,
+} from "../appAuth";
+
+const LazyAppSidebarLayout = lazy(() =>
+  import("../components/AppSidebarLayout").then((module) => ({
+    default: module.AppSidebarLayout,
+  })),
+);
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -59,9 +75,10 @@ export const Route = createRootRouteWithContext<{
   head: () => ({
     meta: [
       { name: "title", content: APP_DISPLAY_NAME },
-      { name: "theme-color", content: "#0f172a" },
+      { name: "theme-color", media: "(prefers-color-scheme: light)", content: "#f8fafc" },
+      { name: "theme-color", media: "(prefers-color-scheme: dark)", content: "#050816" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
-      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
     ],
     links: [
       { rel: "manifest", href: "/manifest.webmanifest" },
@@ -71,33 +88,227 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
-  if (!readNativeApi()) {
+  const authStatus = useAppAuthStatus();
+  if (!authStatus.ready) {
     return (
-      <div className="flex h-screen flex-col bg-background text-foreground">
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            Connecting to {APP_DISPLAY_NAME} server...
-          </p>
-        </div>
-      </div>
+      <AppBootScreen
+        title="Checking access"
+        description="Verifying your T3 session before connecting to the server."
+        statusLabel="Checking sign-in status"
+      />
     );
+  }
+
+  if (!authStatus.reachable) {
+    if (shouldWaitForDesktopAuthService(authStatus, isElectron)) {
+      return (
+        <AppBootScreen
+          title="Reconnecting"
+          description="Waiting for your local T3 server to finish starting."
+          statusLabel="Connecting to desktop server"
+        />
+      );
+    }
+    return (
+      <AppLoginScreen
+        error={authStatus.error ?? "Unable to reach the auth service."}
+        sessionTtlDays={authStatus.sessionTtlDays}
+        onRetry={() => void refreshAppAuthStatus()}
+      />
+    );
+  }
+
+  if (authStatus.enabled && !authStatus.authenticated) {
+    return (
+      <AppLoginScreen
+        error={authStatus.error}
+        sessionTtlDays={authStatus.sessionTtlDays}
+        onRetry={() => void refreshAppAuthStatus()}
+      />
+    );
+  }
+
+  if (!readNativeApi()) {
+    return <AppBootScreen title="Reconnecting" description="Connecting to your T3 server and restoring the current session." statusLabel="Preparing your workspace" />;
   }
 
   return (
     <ToastProvider>
       <AnchoredToastProvider>
         <ServerStateBootstrap />
+        <LaunchThreadRestoreCoordinator />
         <NotificationsPresenceCoordinator />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
         <WebSocketConnectionSurface>
-          <AppSidebarLayout>
-            <Outlet />
-          </AppSidebarLayout>
+          <Suspense
+            fallback={
+              <AppBootScreen
+                title="Loading workspace"
+                description="Loading the app shell and preparing your projects."
+                statusLabel="Loading sidebar and route bundles"
+              />
+            }
+          >
+            <LazyAppSidebarLayout>
+              <Outlet />
+            </LazyAppSidebarLayout>
+          </Suspense>
         </WebSocketConnectionSurface>
       </AnchoredToastProvider>
     </ToastProvider>
+  );
+}
+
+function AppLoginScreen(props: {
+  error: string | null;
+  sessionTtlDays: number | null;
+  onRetry: () => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setLocalError(null);
+    try {
+      await signInWithPassword({
+        username: username.trim(),
+        password,
+        remember,
+      });
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Unable to sign in.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const errorMessage = localError ?? props.error;
+  const trustLabel =
+    props.sessionTtlDays && props.sessionTtlDays > 0
+      ? `Trust this device for ${props.sessionTtlDays} days`
+      : "Keep me signed in on this device";
+
+  return (
+    <div className="relative flex min-h-[var(--app-shell-height)] items-center justify-center overflow-hidden bg-background px-4 py-8 text-foreground sm:min-h-screen sm:px-6">
+      <div className="pointer-events-none absolute inset-0 opacity-80">
+        <div className="absolute inset-x-0 top-0 h-52 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-primary)_16%,transparent),transparent)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_94%,var(--color-black))_0%,var(--background)_56%)]" />
+      </div>
+
+      <section className="relative w-full max-w-md rounded-[1.75rem] border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-7">
+        <div className="flex h-18 w-18 items-center justify-center rounded-[1.4rem] bg-[linear-gradient(180deg,color-mix(in_srgb,var(--background)_16%,white),color-mix(in_srgb,var(--color-primary)_14%,transparent))] shadow-[0_18px_40px_color-mix(in_srgb,var(--color-primary)_18%,transparent)]">
+          <img src="/apple-touch-icon.png" alt="" className="h-11 w-11 object-contain" />
+        </div>
+
+        <p className="mt-5 text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+          {APP_DISPLAY_NAME}
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight">Sign in</h1>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+          Sign in directly in T3 so the PWA can stay inside the app instead of bouncing through an
+          external auth sheet.
+        </p>
+
+        <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+          <div className="space-y-2">
+            <Label htmlFor="t3-login-username">Username</Label>
+            <Input
+              id="t3-login-username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoComplete="username"
+              inputMode="email"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              className="h-12 text-base"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="t3-login-password">Password</Label>
+            <Input
+              id="t3-login-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="h-12 text-base"
+            />
+          </div>
+
+          <label className="flex items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-sm">
+            <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked === true)} />
+            <span>{trustLabel}</span>
+          </label>
+
+          {errorMessage ? (
+            <div className="rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-3 text-sm text-red-100">
+              {errorMessage}
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button type="submit" disabled={submitting || username.trim().length === 0 || password.length === 0} className="h-12 flex-1 text-base">
+              {submitting ? "Signing in..." : "Sign in"}
+            </Button>
+            <Button type="button" variant="outline" onClick={props.onRetry} className="h-12 sm:w-auto">
+              Retry
+            </Button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function AppBootScreen(props: {
+  title: string;
+  description: string;
+  statusLabel: string;
+}) {
+  return (
+    <div className="relative flex min-h-[var(--app-shell-height)] items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:min-h-screen sm:px-6">
+      <div className="pointer-events-none absolute inset-0 opacity-80">
+        <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-primary)_18%,transparent),transparent)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_92%,var(--color-white))_0%,var(--background)_56%)] dark:bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_94%,var(--color-black))_0%,var(--background)_56%)]" />
+      </div>
+
+      <section className="relative w-full max-w-md rounded-[1.75rem] border border-border/75 bg-card/90 p-6 shadow-2xl shadow-black/10 backdrop-blur-md sm:p-7">
+        <div className="flex h-18 w-18 items-center justify-center rounded-[1.4rem] bg-[linear-gradient(180deg,color-mix(in_srgb,var(--background)_18%,white),color-mix(in_srgb,var(--color-primary)_12%,transparent))] shadow-[0_18px_40px_color-mix(in_srgb,var(--color-primary)_18%,transparent)]">
+          <img
+            src="/apple-touch-icon.png"
+            alt=""
+            className="h-11 w-11 animate-[boot-breathe_1.8s_ease-in-out_infinite] object-contain"
+          />
+        </div>
+
+        <p className="mt-5 text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+          {APP_DISPLAY_NAME}
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight">{props.title}</h1>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{props.description}</p>
+
+        <div className="mt-6 h-2.5 overflow-hidden rounded-full bg-muted/70">
+          <div className="h-full w-2/5 animate-[boot-slide_1.4s_ease-in-out_infinite] rounded-full bg-[linear-gradient(90deg,var(--color-primary),color-mix(in_srgb,var(--color-primary)_62%,white))]" />
+        </div>
+
+        <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{props.statusLabel}</span>
+          <span className="inline-flex gap-1" aria-hidden="true">
+            <span className="h-1.5 w-1.5 animate-[boot-dot_1s_ease-in-out_infinite] rounded-full bg-primary/80" />
+            <span className="h-1.5 w-1.5 animate-[boot-dot_1s_ease-in-out_0.14s_infinite] rounded-full bg-primary/80" />
+            <span className="h-1.5 w-1.5 animate-[boot-dot_1s_ease-in-out_0.28s_infinite] rounded-full bg-primary/80" />
+          </span>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -106,7 +317,7 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const details = errorDetails(error);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
+    <div className="relative flex min-h-[var(--app-shell-height)] items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:min-h-screen sm:px-6">
       <div className="pointer-events-none absolute inset-0 opacity-80">
         <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]" />
         <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
@@ -211,6 +422,25 @@ function coalesceOrchestrationUiEvents(
 
 const REPLAY_RECOVERY_RETRY_DELAY_MS = 100;
 const MAX_NO_PROGRESS_REPLAY_RETRIES = 3;
+const BOOTSTRAP_CACHE_REFRESH_DEBOUNCE_MS = 1_500;
+
+function shouldRefreshBootstrapCacheForEvent(event: OrchestrationEvent): boolean {
+  switch (event.type) {
+    case "project.created":
+    case "project.meta-updated":
+    case "project.deleted":
+    case "thread.created":
+    case "thread.deleted":
+    case "thread.archived":
+    case "thread.unarchived":
+    case "thread.meta-updated": {
+      return true;
+    }
+    default: {
+      return false;
+    }
+  }
+}
 
 function resolveActiveThreadIdFromPathname(pathname: string): ThreadId | null {
   const match = pathname.match(/^\/([^/]+)$/);
@@ -226,8 +456,85 @@ function resolveActiveThreadIdFromPathname(pathname: string): ThreadId | null {
   return ThreadId.makeUnsafe(threadId);
 }
 
+function resolvePreferredLaunchThreadId(params: {
+  threads: ReadonlyArray<{ id: ThreadId; updatedAt: string | undefined; createdAt: string }>;
+  threadLastVisitedAtById: Readonly<Record<string, string>>;
+  fallbackThreadId?: string | null;
+}): ThreadId | null {
+  let bestThreadId: ThreadId | null = null;
+  let bestVisitedAt = Number.NEGATIVE_INFINITY;
+  let bestUpdatedAt = Number.NEGATIVE_INFINITY;
+
+  for (const thread of params.threads) {
+    const visitedAtRaw = params.threadLastVisitedAtById[thread.id];
+    const visitedAt = Date.parse(visitedAtRaw ?? "");
+    if (!Number.isFinite(visitedAt)) {
+      continue;
+    }
+    const updatedAt = Date.parse(thread.updatedAt || thread.createdAt);
+    if (
+      visitedAt > bestVisitedAt ||
+      (visitedAt === bestVisitedAt && updatedAt > bestUpdatedAt)
+    ) {
+      bestThreadId = thread.id;
+      bestVisitedAt = visitedAt;
+      bestUpdatedAt = updatedAt;
+    }
+  }
+
+  if (bestThreadId) {
+    return bestThreadId;
+  }
+
+  return params.fallbackThreadId ? ThreadId.makeUnsafe(params.fallbackThreadId) : null;
+}
+
 function ServerStateBootstrap() {
   useEffect(() => startServerStateSync(getWsRpcClient().server), []);
+
+  return null;
+}
+
+function LaunchThreadRestoreCoordinator() {
+  const bootstrapComplete = useStore((store) => store.bootstrapComplete);
+  const threads = useStore((store) => store.threads);
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const navigate = useNavigate();
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    if (!bootstrapComplete || pathname !== "/" || restoredRef.current) {
+      return;
+    }
+
+    const preferredThreadId = resolvePreferredLaunchThreadId({
+      threads: threads.map((thread) => ({
+        id: thread.id,
+        updatedAt: thread.updatedAt,
+        createdAt: thread.createdAt,
+      })),
+      threadLastVisitedAtById,
+    });
+
+    if (!preferredThreadId) {
+      restoredRef.current = true;
+      return;
+    }
+
+    restoredRef.current = true;
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: preferredThreadId },
+      replace: true,
+    });
+  }, [bootstrapComplete, navigate, pathname, threadLastVisitedAtById, threads]);
+
+  useEffect(() => {
+    if (pathname !== "/") {
+      restoredRef.current = false;
+    }
+  }, [pathname]);
 
   return null;
 }
@@ -320,15 +627,29 @@ function EventRouter() {
       if (readPathname() !== "/") {
         return;
       }
-      if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+      const preferredThreadId = resolvePreferredLaunchThreadId({
+        threads: useStore
+          .getState()
+          .threads.map((thread) => ({
+            id: thread.id,
+            updatedAt: thread.updatedAt,
+            createdAt: thread.createdAt,
+          })),
+        threadLastVisitedAtById: useUiStateStore.getState().threadLastVisitedAtById,
+        fallbackThreadId: payload.bootstrapThreadId,
+      });
+      if (!preferredThreadId) {
+        return;
+      }
+      if (handledBootstrapThreadIdRef.current === preferredThreadId) {
         return;
       }
       await navigate({
         to: "/$threadId",
-        params: { threadId: payload.bootstrapThreadId },
+        params: { threadId: preferredThreadId },
         replace: true,
       });
-      handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
+      handledBootstrapThreadIdRef.current = preferredThreadId;
     })().catch(() => undefined);
   });
 
@@ -397,6 +718,7 @@ function EventRouter() {
     const recovery = createOrchestrationRecoveryCoordinator();
     let replayRetryTracker: import("../orchestrationRecovery").ReplayRetryTracker | null = null;
     let needsProviderInvalidation = false;
+    let needsBootstrapCacheRefresh = false;
     const pendingDomainEvents: OrchestrationEvent[] = [];
     let flushPendingDomainEventsScheduled = false;
 
@@ -442,6 +764,28 @@ function EventRouter() {
         trailing: true,
       },
     );
+    const bootstrapCacheRefreshThrottler = new Throttler(
+      () => {
+        if (!needsBootstrapCacheRefresh || disposed) {
+          return;
+        }
+        needsBootstrapCacheRefresh = false;
+        void api.orchestration
+          .getSnapshot()
+          .then((snapshot) => {
+            if (disposed) {
+              return;
+            }
+            persistReadModelToBootstrapCache(snapshot);
+          })
+          .catch(() => undefined);
+      },
+      {
+        wait: BOOTSTRAP_CACHE_REFRESH_DEBOUNCE_MS,
+        leading: false,
+        trailing: true,
+      },
+    );
 
     const applyEventBatch = (events: ReadonlyArray<OrchestrationEvent>) => {
       const nextEvents = recovery.markEventBatchApplied(events);
@@ -461,6 +805,10 @@ function EventRouter() {
       if (batchEffects.needsProviderInvalidation) {
         needsProviderInvalidation = true;
         void queryInvalidationThrottler.maybeExecute();
+      }
+      if (nextEvents.some(shouldRefreshBootstrapCacheForEvent)) {
+        needsBootstrapCacheRefresh = true;
+        void bootstrapCacheRefreshThrottler.maybeExecute();
       }
 
       applyOrchestrationEvents(uiEvents);
@@ -585,6 +933,7 @@ function EventRouter() {
         const snapshot = await api.orchestration.getSnapshot();
         if (!disposed) {
           syncServerReadModel(snapshot);
+          persistReadModelToBootstrapCache(snapshot);
           reconcileSnapshotDerivedState();
           if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
             void runReplayRecovery("sequence-gap");
@@ -638,8 +987,10 @@ function EventRouter() {
       disposed = true;
       disposedRef.current = true;
       needsProviderInvalidation = false;
+      needsBootstrapCacheRefresh = false;
       flushPendingDomainEventsScheduled = false;
       pendingDomainEvents.length = 0;
+      bootstrapCacheRefreshThrottler.cancel();
       queryInvalidationThrottler.cancel();
       unsubDomainEvent();
       unsubTerminalEvent();

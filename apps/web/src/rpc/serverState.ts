@@ -13,6 +13,7 @@ import {
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useRef } from "react";
 
+import { persistServerConfigToBootstrapCache } from "../bootstrapCache";
 import type { WsRpcClient } from "../wsRpcClient";
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "./atomRegistry";
 
@@ -208,6 +209,7 @@ let nextServerConfigUpdatedNotificationId = 1;
 
 function resolveServerConfig(config: ServerConfig): void {
   appAtomRegistry.set(serverConfigAtom, config);
+  persistServerConfigToBootstrapCache(config);
 }
 
 function emitProvidersUpdated(payload: ServerProviderUpdatedPayload): void {
