@@ -565,11 +565,7 @@ export const CodexProviderLive = Layer.effect(
           provider: PROVIDER,
           enabled: codexSettings.enabled,
           checkedAt: new Date().toISOString(),
-          models: providerModelsFromSettings(
-            BUILT_IN_MODELS,
-            PROVIDER,
-            codexSettings.customModels,
-          ),
+          models: providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, codexSettings.customModels),
           message: "Checking Codex provider status in the background.",
           disabledMessage: "Codex is disabled in T3 Code settings.",
         }),

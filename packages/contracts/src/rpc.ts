@@ -45,6 +45,7 @@ import {
   OrchestrationReplayEventsError,
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
+  OrchestrationSubscribeDomainEventsInput,
 } from "./orchestration";
 import {
   ProjectSearchEntriesError,
@@ -167,23 +168,17 @@ export const WsServerGetNotificationsStateRpc = Rpc.make(WS_METHODS.serverGetNot
   error: ServerNotificationsError,
 });
 
-export const WsServerUpsertPushSubscriptionRpc = Rpc.make(
-  WS_METHODS.serverUpsertPushSubscription,
-  {
-    payload: ServerUpsertPushSubscriptionInput,
-    success: Schema.Void,
-    error: ServerNotificationsError,
-  },
-);
+export const WsServerUpsertPushSubscriptionRpc = Rpc.make(WS_METHODS.serverUpsertPushSubscription, {
+  payload: ServerUpsertPushSubscriptionInput,
+  success: Schema.Void,
+  error: ServerNotificationsError,
+});
 
-export const WsServerRemovePushSubscriptionRpc = Rpc.make(
-  WS_METHODS.serverRemovePushSubscription,
-  {
-    payload: ServerRemovePushSubscriptionInput,
-    success: Schema.Void,
-    error: ServerNotificationsError,
-  },
-);
+export const WsServerRemovePushSubscriptionRpc = Rpc.make(WS_METHODS.serverRemovePushSubscription, {
+  payload: ServerRemovePushSubscriptionInput,
+  success: Schema.Void,
+  error: ServerNotificationsError,
+});
 
 export const WsServerUpdatePresenceRpc = Rpc.make(WS_METHODS.serverUpdatePresence, {
   payload: ServerUpdatePresenceInput,
@@ -369,7 +364,7 @@ export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.
 export const WsSubscribeOrchestrationDomainEventsRpc = Rpc.make(
   WS_METHODS.subscribeOrchestrationDomainEvents,
   {
-    payload: Schema.Struct({}),
+    payload: OrchestrationSubscribeDomainEventsInput,
     success: OrchestrationEvent,
     stream: true,
   },

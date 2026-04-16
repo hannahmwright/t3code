@@ -96,7 +96,9 @@ const makePushSubscriptionRepository = Effect.gen(function* () {
 
   const getByInstallationId: PushSubscriptionRepositoryShape["getByInstallationId"] = (input) =>
     getPushSubscriptionRow(input).pipe(
-      Effect.mapError(toPersistenceSqlError("PushSubscriptionRepository.getByInstallationId:query")),
+      Effect.mapError(
+        toPersistenceSqlError("PushSubscriptionRepository.getByInstallationId:query"),
+      ),
     );
 
   const listAll: PushSubscriptionRepositoryShape["listAll"] = () =>

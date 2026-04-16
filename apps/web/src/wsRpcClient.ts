@@ -10,7 +10,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
-import { Effect, Stream } from "effect";
+import { Duration, Effect, Option, Stream } from "effect";
 
 import { type WsRpcProtocolClient } from "./rpc/protocol";
 import { resetWsReconnectBackoff } from "./rpc/wsConnectionState";
@@ -23,6 +23,14 @@ type RpcInput<TTag extends RpcTag> = Parameters<RpcMethod<TTag>>[0];
 interface StreamSubscriptionOptions {
   readonly onResubscribe?: () => void;
 }
+
+interface OrchestrationDomainEventSubscriptionOptions extends StreamSubscriptionOptions {
+  readonly getFromSequenceExclusive?: () => number;
+}
+
+const DISPATCH_COMMAND_TIMEOUT = Duration.seconds(20);
+const DISPATCH_COMMAND_TIMEOUT_MESSAGE =
+  "Timed out waiting for the T3 server to acknowledge the request. It may still complete after reconnecting.";
 
 type RpcUnaryMethod<TTag extends RpcTag> =
   RpcMethod<TTag> extends (input: any, options?: any) => Effect.Effect<infer TSuccess, any, any>
@@ -97,12 +105,8 @@ export interface WsRpcClient {
       patch: ServerSettingsPatch,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
     readonly getNotificationsState: RpcUnaryMethod<typeof WS_METHODS.serverGetNotificationsState>;
-    readonly upsertPushSubscription: RpcUnaryMethod<
-      typeof WS_METHODS.serverUpsertPushSubscription
-    >;
-    readonly removePushSubscription: RpcUnaryMethod<
-      typeof WS_METHODS.serverRemovePushSubscription
-    >;
+    readonly upsertPushSubscription: RpcUnaryMethod<typeof WS_METHODS.serverUpsertPushSubscription>;
+    readonly removePushSubscription: RpcUnaryMethod<typeof WS_METHODS.serverRemovePushSubscription>;
     readonly updatePresence: RpcUnaryMethod<typeof WS_METHODS.serverUpdatePresence>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -117,7 +121,12 @@ export interface WsRpcClient {
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
     readonly getFullThreadDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getFullThreadDiff>;
     readonly replayEvents: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.replayEvents>;
-    readonly onDomainEvent: RpcStreamMethod<typeof WS_METHODS.subscribeOrchestrationDomainEvents>;
+    readonly onDomainEvent: (
+      listener: Parameters<
+        RpcStreamMethod<typeof WS_METHODS.subscribeOrchestrationDomainEvents>
+      >[0],
+      options?: OrchestrationDomainEventSubscriptionOptions,
+    ) => () => void;
   };
 }
 
@@ -254,7 +263,11 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
       getThreadSnapshot: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getThreadSnapshot](input)),
       dispatchCommand: (input) =>
-        transport.request((client) => client[ORCHESTRATION_WS_METHODS.dispatchCommand](input)),
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.dispatchCommand](input), {
+          timeout: Option.some(DISPATCH_COMMAND_TIMEOUT),
+          timeoutMessage: DISPATCH_COMMAND_TIMEOUT_MESSAGE,
+          recoverOnTimeout: true,
+        }),
       getTurnDiff: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getTurnDiff](input)),
       getFullThreadDiff: (input) =>
@@ -265,7 +278,10 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
           .then((events) => [...events]),
       onDomainEvent: (listener, options) =>
         transport.subscribe(
-          (client) => client[WS_METHODS.subscribeOrchestrationDomainEvents]({}),
+          (client) =>
+            client[WS_METHODS.subscribeOrchestrationDomainEvents]({
+              fromSequenceExclusive: Math.max(0, options?.getFromSequenceExclusive?.() ?? 0),
+            }),
           listener,
           options,
         ),

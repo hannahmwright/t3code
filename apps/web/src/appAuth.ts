@@ -226,11 +226,7 @@ export function subscribeToAppAuthStatus(listener: () => void): () => void {
 
 export function useAppAuthStatus(): AppAuthStatus {
   const bypassAppAuth = shouldBypassAppAuthForDesktopShell();
-  const status = useSyncExternalStore(
-    subscribeToAppAuthStatus,
-    getAppAuthStatus,
-    getAppAuthStatus,
-  );
+  const status = useSyncExternalStore(subscribeToAppAuthStatus, getAppAuthStatus, getAppAuthStatus);
 
   useEffect(() => {
     if (bypassAppAuth) {

@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 
 import { isElectron } from "./env";
 
-const SERVICE_WORKER_URL = "/sw.js?v=3";
+const SERVICE_WORKER_URL = "/sw.js?v=5";
 
 interface BeforeInstallPromptEvent extends Event {
   readonly platforms: ReadonlyArray<string>;

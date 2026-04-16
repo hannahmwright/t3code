@@ -239,10 +239,7 @@ function hasStructuredUserInputQuestions(payload: Record<string, unknown> | null
         return false;
       }
       const optionRecord = option as Record<string, unknown>;
-      return (
-        typeof optionRecord.label === "string" &&
-        typeof optionRecord.description === "string"
-      );
+      return typeof optionRecord.label === "string" && typeof optionRecord.description === "string";
     });
   });
 }
@@ -1281,9 +1278,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const pendingApprovalThreadIdSet = new Set(
             pendingApprovalThreadRows.map((row) => row.threadId),
           );
-          const pendingUserInputThreadIdSet = buildPendingUserInputThreadIdSet(
-            userInputActivityRows,
-          );
+          const pendingUserInputThreadIdSet =
+            buildPendingUserInputThreadIdSet(userInputActivityRows);
 
           let updatedAt: string | null = null;
 
@@ -1402,9 +1398,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             updatedAt: updatedAt ?? new Date(0).toISOString(),
           }).pipe(
             Effect.mapError(
-              toPersistenceDecodeError(
-                "ProjectionSnapshotQuery.getShellSnapshot:decodeReadModel",
-              ),
+              toPersistenceDecodeError("ProjectionSnapshotQuery.getShellSnapshot:decodeReadModel"),
             ),
           );
         }),

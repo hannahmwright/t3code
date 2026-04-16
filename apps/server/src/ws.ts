@@ -477,12 +477,14 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           ),
           { "rpc.aggregate": "orchestration" },
         ),
-      [WS_METHODS.subscribeOrchestrationDomainEvents]: (_input) =>
+      [WS_METHODS.subscribeOrchestrationDomainEvents]: (input) =>
         observeRpcStreamEffect(
           WS_METHODS.subscribeOrchestrationDomainEvents,
           Effect.gen(function* () {
-            const snapshot = yield* orchestrationEngine.getReadModel();
-            const fromSequenceExclusive = snapshot.snapshotSequence;
+            const fromSequenceExclusive = clamp(input.fromSequenceExclusive, {
+              maximum: Number.MAX_SAFE_INTEGER,
+              minimum: 0,
+            });
             const replayEvents: Array<OrchestrationEvent> = yield* Stream.runCollect(
               orchestrationEngine.readEvents(fromSequenceExclusive),
             ).pipe(

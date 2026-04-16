@@ -42,7 +42,11 @@ import {
   clearPromotedDraftThreads,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import { deriveShellBootstrapStateFromShellReadModel, hydrateShellBootstrapState, useStore } from "../store";
+import {
+  deriveShellBootstrapStateFromShellReadModel,
+  hydrateShellBootstrapState,
+  useStore,
+} from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { migrateLocalSettingsToServer } from "../hooks/useSettings";
@@ -51,7 +55,8 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
-import { deriveReplayRetryDecision } from "../orchestrationRecovery";
+import { shouldRunForegroundSnapshotRecovery } from "../foregroundRecovery";
+import { useWebNotifications } from "../hooks/useWebNotifications";
 import { getWsRpcClient } from "~/wsRpcClient";
 import { getOrCreateInstallationId } from "../notifications";
 import {
@@ -123,7 +128,13 @@ function RootRouteView() {
   }
 
   if (!readNativeApi()) {
-    return <AppBootScreen title="Reconnecting" description="Connecting to your T3 server and restoring the current session." statusLabel="Preparing your workspace" />;
+    return (
+      <AppBootScreen
+        title="Reconnecting"
+        description="Connecting to your T3 server and restoring the current session."
+        statusLabel="Preparing your workspace"
+      />
+    );
   }
 
   return (
@@ -132,6 +143,7 @@ function RootRouteView() {
         <ServerStateBootstrap />
         <LaunchThreadRestoreCoordinator />
         <NotificationsPresenceCoordinator />
+        <NotificationsPermissionPromptCoordinator />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <WebSocketConnectionSurface>
@@ -227,7 +239,10 @@ function AppLoginScreen(props: {
           </div>
 
           <label className="flex items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-sm">
-            <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked === true)} />
+            <Checkbox
+              checked={remember}
+              onCheckedChange={(checked) => setRemember(checked === true)}
+            />
             <span>{trustLabel}</span>
           </label>
 
@@ -238,10 +253,19 @@ function AppLoginScreen(props: {
           ) : null}
 
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Button type="submit" disabled={submitting || username.trim().length === 0 || password.length === 0} className="h-12 flex-1 text-base">
+            <Button
+              type="submit"
+              disabled={submitting || username.trim().length === 0 || password.length === 0}
+              className="h-12 flex-1 text-base"
+            >
               {submitting ? "Signing in..." : "Sign in"}
             </Button>
-            <Button type="button" variant="outline" onClick={props.onRetry} className="h-12 sm:w-auto">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={props.onRetry}
+              className="h-12 sm:w-auto"
+            >
               Retry
             </Button>
           </div>
@@ -251,11 +275,7 @@ function AppLoginScreen(props: {
   );
 }
 
-function AppBootScreen(props: {
-  title: string;
-  description: string;
-  statusLabel: string;
-}) {
+function AppBootScreen(props: { title: string; description: string; statusLabel: string }) {
   return (
     <div className="relative flex min-h-[var(--app-shell-height)] items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:min-h-screen sm:px-6">
       <div className="pointer-events-none absolute inset-0 opacity-80">
@@ -403,8 +423,6 @@ function coalesceOrchestrationUiEvents(
   return coalesced;
 }
 
-const REPLAY_RECOVERY_RETRY_DELAY_MS = 100;
-const MAX_NO_PROGRESS_REPLAY_RETRIES = 3;
 const BOOTSTRAP_CACHE_REFRESH_DEBOUNCE_MS = 1_500;
 
 function shouldRefreshBootstrapCacheForEvent(event: OrchestrationEvent): boolean {
@@ -455,10 +473,7 @@ function resolvePreferredLaunchThreadId(params: {
       continue;
     }
     const updatedAt = Date.parse(thread.updatedAt || thread.createdAt);
-    if (
-      visitedAt > bestVisitedAt ||
-      (visitedAt === bestVisitedAt && updatedAt > bestUpdatedAt)
-    ) {
+    if (visitedAt > bestVisitedAt || (visitedAt === bestVisitedAt && updatedAt > bestUpdatedAt)) {
       bestThreadId = thread.id;
       bestVisitedAt = visitedAt;
       bestUpdatedAt = updatedAt;
@@ -570,6 +585,109 @@ function NotificationsPresenceCoordinator() {
   return null;
 }
 
+function NotificationsPermissionPromptCoordinator() {
+  const { installState, permission, query, supportsBrowserPush, enable } = useWebNotifications();
+  const promptToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  const handleEnableNotifications = useEffectEvent(() => {
+    if (promptToastIdRef.current !== null) {
+      toastManager.close(promptToastIdRef.current);
+      promptToastIdRef.current = null;
+    }
+
+    void enable()
+      .then(() => {
+        const nextPermission = Notification.permission;
+        if (nextPermission === "granted") {
+          toastManager.add({
+            type: "success",
+            title: "Notifications enabled",
+            description: "You’ll get a ping here when a turn finishes.",
+            data: {
+              dismissAfterVisibleMs: 8_000,
+              hideCopyButton: true,
+            },
+          });
+          return;
+        }
+
+        if (nextPermission === "denied") {
+          toastManager.add({
+            type: "warning",
+            title: "Notifications blocked",
+            description: "Enable notifications for T3 in your browser or device settings.",
+            data: {
+              dismissAfterVisibleMs: 10_000,
+              hideCopyButton: true,
+            },
+          });
+        }
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to enable notifications",
+          description:
+            error instanceof Error ? error.message : "Unknown error enabling notifications.",
+          data: {
+            dismissAfterVisibleMs: 10_000,
+          },
+        });
+      });
+  });
+
+  useEffect(() => {
+    const shouldPrompt =
+      !isElectron &&
+      installState.isStandalone &&
+      supportsBrowserPush &&
+      permission === "default" &&
+      !query.isLoading &&
+      query.data?.supported !== false &&
+      query.data?.subscribed !== true;
+
+    if (!shouldPrompt) {
+      if (promptToastIdRef.current !== null) {
+        toastManager.close(promptToastIdRef.current);
+        promptToastIdRef.current = null;
+      }
+      return;
+    }
+
+    if (promptToastIdRef.current !== null) {
+      return;
+    }
+
+    const toastId = toastManager.add({
+      type: "info",
+      title: "Turn on notifications",
+      description: "Get a ping on this device when a turn finishes.",
+      actionProps: {
+        children: "Enable",
+        onClick: () => handleEnableNotifications(),
+      },
+      data: {
+        hideCopyButton: true,
+      },
+    });
+    promptToastIdRef.current = toastId;
+
+    return () => {
+      if (promptToastIdRef.current === toastId) {
+        promptToastIdRef.current = null;
+      }
+    };
+  }, [
+    installState.isStandalone,
+    permission,
+    query.data?.subscribed,
+    query.data?.supported,
+    query.isLoading,
+    supportsBrowserPush,
+  ]);
+
+  return null;
+}
+
 function EventRouter() {
   const applyOrchestrationEvents = useStore((store) => store.applyOrchestrationEvents);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
@@ -611,13 +729,11 @@ function EventRouter() {
         return;
       }
       const preferredThreadId = resolvePreferredLaunchThreadId({
-        threads: useStore
-          .getState()
-          .threads.map((thread) => ({
-            id: thread.id,
-            updatedAt: thread.updatedAt,
-            createdAt: thread.createdAt,
-          })),
+        threads: useStore.getState().threads.map((thread) => ({
+          id: thread.id,
+          updatedAt: thread.updatedAt,
+          createdAt: thread.createdAt,
+        })),
         threadLastVisitedAtById: useUiStateStore.getState().threadLastVisitedAtById,
         fallbackThreadId: payload.bootstrapThreadId,
       });
@@ -699,11 +815,12 @@ function EventRouter() {
     let disposed = false;
     disposedRef.current = false;
     const recovery = createOrchestrationRecoveryCoordinator();
-    let replayRetryTracker: import("../orchestrationRecovery").ReplayRetryTracker | null = null;
     let needsProviderInvalidation = false;
     let needsBootstrapCacheRefresh = false;
     const pendingDomainEvents: OrchestrationEvent[] = [];
     let flushPendingDomainEventsScheduled = false;
+    let unsubscribeDomainEvents: (() => void) | null = null;
+    let domainReconnectPromise: Promise<void> | null = null;
 
     const reconcileSnapshotDerivedState = () => {
       const threads = useStore.getState().threads;
@@ -772,14 +889,13 @@ function EventRouter() {
     );
 
     const applyEventBatch = (events: ReadonlyArray<OrchestrationEvent>) => {
-      const nextEvents = recovery.markEventBatchApplied(events);
-      if (nextEvents.length === 0) {
+      if (events.length === 0) {
         return;
       }
 
-      const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
-      const uiEvents = coalesceOrchestrationUiEvents(nextEvents);
-      const needsProjectUiSync = nextEvents.some(
+      const batchEffects = deriveOrchestrationBatchEffects(events);
+      const uiEvents = coalesceOrchestrationUiEvents(events);
+      const needsProjectUiSync = events.some(
         (event) =>
           event.type === "project.created" ||
           event.type === "project.meta-updated" ||
@@ -790,7 +906,7 @@ function EventRouter() {
         needsProviderInvalidation = true;
         void queryInvalidationThrottler.maybeExecute();
       }
-      if (nextEvents.some(shouldRefreshBootstrapCacheForEvent)) {
+      if (events.some(shouldRefreshBootstrapCacheForEvent)) {
         needsBootstrapCacheRefresh = true;
         void bootstrapCacheRefreshThrottler.maybeExecute();
       }
@@ -800,7 +916,7 @@ function EventRouter() {
         const projects = useStore.getState().projects;
         syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
       }
-      const needsThreadUiSync = nextEvents.some(
+      const needsThreadUiSync = events.some(
         (event) => event.type === "thread.created" || event.type === "thread.deleted",
       );
       if (needsThreadUiSync) {
@@ -825,76 +941,85 @@ function EventRouter() {
         removeTerminalState(threadId);
       }
     };
+    const requestDomainStreamReconnect = () => {
+      if (disposed || domainReconnectPromise !== null) {
+        return;
+      }
+
+      domainReconnectPromise = getWsRpcClient()
+        .reconnect()
+        .catch(() => undefined)
+        .finally(() => {
+          domainReconnectPromise = null;
+        });
+    };
     const flushPendingDomainEvents = () => {
       flushPendingDomainEventsScheduled = false;
       if (disposed || pendingDomainEvents.length === 0) {
         return;
       }
 
-      const events = pendingDomainEvents.splice(0, pendingDomainEvents.length);
-      applyEventBatch(events);
+      const { bootstrapped, inFlight, latestSequence } = recovery.getState();
+      if (!bootstrapped || inFlight !== null) {
+        return;
+      }
+
+      const queuedEvents = pendingDomainEvents
+        .filter((event) => event.sequence > latestSequence)
+        .toSorted((left, right) => left.sequence - right.sequence);
+      pendingDomainEvents.length = 0;
+      pendingDomainEvents.push(...queuedEvents);
+      if (pendingDomainEvents.length === 0) {
+        return;
+      }
+
+      const nextEvents = recovery.markEventBatchApplied(pendingDomainEvents);
+      if (nextEvents.length === 0) {
+        requestDomainStreamReconnect();
+        return;
+      }
+
+      const appliedThroughSequence = nextEvents.at(-1)?.sequence ?? latestSequence;
+      const remainingEvents = pendingDomainEvents.filter(
+        (event) => event.sequence > appliedThroughSequence,
+      );
+      pendingDomainEvents.length = 0;
+      pendingDomainEvents.push(...remainingEvents);
+      applyEventBatch(nextEvents);
+      if (pendingDomainEvents.length > 0) {
+        schedulePendingDomainEventFlush();
+      }
     };
     const schedulePendingDomainEventFlush = () => {
-      if (flushPendingDomainEventsScheduled) {
+      if (disposed || flushPendingDomainEventsScheduled) {
         return;
       }
 
       flushPendingDomainEventsScheduled = true;
       queueMicrotask(flushPendingDomainEvents);
     };
-
-    const runReplayRecovery = async (reason: "sequence-gap" | "resubscribe"): Promise<void> => {
-      if (!recovery.beginReplayRecovery(reason)) {
+    const ensureDomainEventSubscription = () => {
+      if (disposed || unsubscribeDomainEvents !== null) {
         return;
       }
 
-      const fromSequenceExclusive = recovery.getState().latestSequence;
-      try {
-        const events = await api.orchestration.replayEvents(fromSequenceExclusive);
-        if (!disposed) {
-          applyEventBatch(events);
-        }
-      } catch {
-        replayRetryTracker = null;
-        recovery.failReplayRecovery();
-        void fallbackToSnapshotRecovery();
-        return;
-      }
-
-      if (!disposed) {
-        const replayCompletion = recovery.completeReplayRecovery();
-        const retryDecision = deriveReplayRetryDecision({
-          previousTracker: replayRetryTracker,
-          completion: replayCompletion,
-          recoveryState: recovery.getState(),
-          baseDelayMs: REPLAY_RECOVERY_RETRY_DELAY_MS,
-          maxNoProgressRetries: MAX_NO_PROGRESS_REPLAY_RETRIES,
-        });
-        replayRetryTracker = retryDecision.tracker;
-
-        if (retryDecision.shouldRetry) {
-          if (retryDecision.delayMs > 0) {
-            await new Promise<void>((resolve) => {
-              setTimeout(resolve, retryDecision.delayMs);
-            });
-            if (disposed) {
-              return;
-            }
+      unsubscribeDomainEvents = api.orchestration.onDomainEvent(
+        (event) => {
+          const action = recovery.classifyDomainEvent(event.sequence);
+          if (action === "ignore") {
+            return;
           }
-          void runReplayRecovery(reason);
-        } else if (replayCompletion.shouldReplay && import.meta.env.MODE !== "test") {
-          console.warn(
-            "[orchestration-recovery]",
-            "Stopping replay recovery after no-progress retries.",
-            {
-              state: recovery.getState(),
-            },
-          );
-        }
-      }
+
+          pendingDomainEvents.push(event);
+          schedulePendingDomainEventFlush();
+        },
+        {
+          getFromSequenceExclusive: () => recovery.getState().latestSequence,
+        },
+      );
     };
 
-    const runSnapshotRecovery = async (reason: "bootstrap" | "replay-failed"): Promise<void> => {
+    const runSnapshotRecovery = async (reason: "bootstrap" | "foreground"): Promise<void> => {
       const started = recovery.beginSnapshotRecovery(reason);
       if (import.meta.env.MODE !== "test") {
         const state = recovery.getState();
@@ -921,9 +1046,9 @@ function EventRouter() {
           reconcileSnapshotDerivedState();
           needsBootstrapCacheRefresh = true;
           void bootstrapCacheRefreshThrottler.maybeExecute();
-          if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
-            void runReplayRecovery("sequence-gap");
-          }
+          recovery.completeSnapshotRecovery(snapshot.snapshotSequence);
+          ensureDomainEventSubscription();
+          flushPendingDomainEvents();
         }
       } catch {
         // Keep prior state and wait for welcome or a later replay attempt.
@@ -932,9 +1057,14 @@ function EventRouter() {
     };
 
     const bootstrapFromShell = async (): Promise<void> => {
+      const started = recovery.beginSnapshotRecovery("bootstrap");
+      if (!started) {
+        return;
+      }
       try {
         const snapshot = await api.orchestration.getShellSnapshot();
         if (disposed) {
+          recovery.failSnapshotRecovery();
           return;
         }
         useStore.setState((state) =>
@@ -942,38 +1072,71 @@ function EventRouter() {
         );
         persistShellReadModelToBootstrapCache(snapshot);
         reconcileSnapshotDerivedState();
+        recovery.completeSnapshotRecovery(snapshot.snapshotSequence);
+        ensureDomainEventSubscription();
+        flushPendingDomainEvents();
       } catch {
+        recovery.failSnapshotRecovery();
         await runSnapshotRecovery("bootstrap");
       }
     };
     bootstrapFromSnapshotRef.current = bootstrapFromShell;
 
-    const fallbackToSnapshotRecovery = async (): Promise<void> => {
-      await runSnapshotRecovery("replay-failed");
+    let lastForegroundRecoveryAtMs: number | null = null;
+    let pendingBackgroundedAtMs: number | null = null;
+    const markForegroundBackgrounded = () => {
+      pendingBackgroundedAtMs = Date.now();
     };
-    const unsubDomainEvent = api.orchestration.onDomainEvent(
-      (event) => {
-        const action = recovery.classifyDomainEvent(event.sequence);
-        if (action === "apply") {
-          pendingDomainEvents.push(event);
-          schedulePendingDomainEventFlush();
-          return;
-        }
-        if (action === "recover") {
-          flushPendingDomainEvents();
-          void runReplayRecovery("sequence-gap");
-        }
-      },
-      {
-        onResubscribe: () => {
-          if (disposed) {
-            return;
-          }
-          flushPendingDomainEvents();
-          void runReplayRecovery("resubscribe");
-        },
-      },
-    );
+    const maybeRunForegroundSnapshotRecovery = () => {
+      if (
+        isElectron ||
+        typeof document === "undefined" ||
+        typeof window === "undefined" ||
+        recovery.getState().inFlight !== null
+      ) {
+        return;
+      }
+
+      const nowMs = Date.now();
+      if (
+        !shouldRunForegroundSnapshotRecovery({
+          isVisible: document.visibilityState === "visible",
+          pendingBackgroundedAtMs,
+          lastForegroundRecoveryAtMs,
+          nowMs,
+        })
+      ) {
+        return;
+      }
+
+      pendingBackgroundedAtMs = null;
+      lastForegroundRecoveryAtMs = nowMs;
+      void runSnapshotRecovery("foreground");
+    };
+    const handleForegroundVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        markForegroundBackgrounded();
+        return;
+      }
+
+      maybeRunForegroundSnapshotRecovery();
+    };
+    const handleForegroundFocus = () => {
+      maybeRunForegroundSnapshotRecovery();
+    };
+    const handleForegroundPageHide = () => {
+      markForegroundBackgrounded();
+    };
+    const handleForegroundPageShow = () => {
+      maybeRunForegroundSnapshotRecovery();
+    };
+
+    if (!isElectron && typeof window !== "undefined" && typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleForegroundVisibilityChange);
+      window.addEventListener("focus", handleForegroundFocus);
+      window.addEventListener("pagehide", handleForegroundPageHide);
+      window.addEventListener("pageshow", handleForegroundPageShow);
+    }
     const unsubTerminalEvent = api.terminal.onEvent((event) => {
       const thread = useStore.getState().threads.find((entry) => entry.id === event.threadId);
       if (thread && thread.archivedAt !== null) {
@@ -990,8 +1153,14 @@ function EventRouter() {
       pendingDomainEvents.length = 0;
       bootstrapCacheRefreshThrottler.cancel();
       queryInvalidationThrottler.cancel();
-      unsubDomainEvent();
+      unsubscribeDomainEvents?.();
       unsubTerminalEvent();
+      if (!isElectron && typeof window !== "undefined" && typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleForegroundVisibilityChange);
+        window.removeEventListener("focus", handleForegroundFocus);
+        window.removeEventListener("pagehide", handleForegroundPageHide);
+        window.removeEventListener("pageshow", handleForegroundPageShow);
+      }
     };
   }, [
     applyOrchestrationEvents,

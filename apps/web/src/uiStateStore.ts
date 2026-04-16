@@ -604,7 +604,10 @@ export function seedProjectExpansion(
 
   const expandedProjectIdSet = new Set(expandedProjectIds);
   const nextExpandedById = Object.fromEntries(
-    [...currentProjectCwdById.keys()].map((projectId) => [projectId, expandedProjectIdSet.has(projectId)]),
+    [...currentProjectCwdById.keys()].map((projectId) => [
+      projectId,
+      expandedProjectIdSet.has(projectId),
+    ]),
   );
 
   if (recordsEqual(state.projectExpandedById, nextExpandedById)) {
@@ -621,17 +624,14 @@ export function seedProjectExpansion(
   };
 }
 
-export function seedCollapsedProjectGroups(
-  state: UiState,
-  groupNames: readonly string[],
-): UiState {
+export function seedCollapsedProjectGroups(state: UiState, groupNames: readonly string[]): UiState {
   if (state.hasExplicitCollapsedProjectGroupState) {
     return state;
   }
 
-  const nextCollapsedProjectGroups = [...new Set(groupNames.map((groupName) => groupName.trim()).filter(Boolean))].toSorted(
-    (left, right) => left.localeCompare(right),
-  );
+  const nextCollapsedProjectGroups = [
+    ...new Set(groupNames.map((groupName) => groupName.trim()).filter(Boolean)),
+  ].toSorted((left, right) => left.localeCompare(right));
 
   if (stringArraysEqual(state.collapsedProjectGroups, nextCollapsedProjectGroups)) {
     return {
@@ -658,19 +658,14 @@ export function setShowArchivedThreads(state: UiState, showArchivedThreads: bool
   };
 }
 
-export function addWorkspaceDefinition(
-  state: UiState,
-  definition: UiWorkspaceDefinition,
-): UiState {
+export function addWorkspaceDefinition(state: UiState, definition: UiWorkspaceDefinition): UiState {
   const name = definition.name.trim();
   if (name.length === 0) {
     return state;
   }
 
   const emoji = definition.emoji?.trim() ? definition.emoji.trim() : null;
-  const nextWorkspaceDefinitions = state.workspaceDefinitions.some(
-    (entry) => entry.name === name,
-  )
+  const nextWorkspaceDefinitions = state.workspaceDefinitions.some((entry) => entry.name === name)
     ? state.workspaceDefinitions.map((entry) => (entry.name === name ? { name, emoji } : entry))
     : [...state.workspaceDefinitions, { name, emoji }];
 

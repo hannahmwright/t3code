@@ -32,6 +32,8 @@ if (cachedShellState) {
 const history = isElectron || shouldUseHashRouting() ? createHashHistory() : createBrowserHistory();
 const router = getRouter(history);
 
+window.__T3_MARK_BOOT_READY?.();
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <RouterProvider router={router} />

@@ -135,10 +135,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <Button
           type="submit"
           size="sm"
-          className={cn(
-            "h-10 rounded-l-full rounded-r-none sm:h-8",
-            compact ? "px-3.5" : "px-4.5",
-          )}
+          className={cn("h-10 rounded-l-full rounded-r-none sm:h-8", compact ? "px-3.5" : "px-4.5")}
           disabled={isSendBusy || isConnecting}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Implement"}

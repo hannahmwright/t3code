@@ -656,7 +656,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
-  const stagePackageJson: StagePackageJson = {
+  const baseStagePackageJson: StagePackageJson = {
     name: "t3code",
     version: appVersion,
     buildVersion: appVersion,
@@ -687,12 +687,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     },
     packageManager: rootPackageJson.packageManager,
   };
-  if (options.platform === "mac") {
-    stagePackageJson.build = {
-      ...stagePackageJson.build,
-      afterPack: afterPackHookPath,
-    };
-  }
+  const stagePackageJson: StagePackageJson =
+    options.platform === "mac"
+      ? {
+          ...baseStagePackageJson,
+          build: {
+            ...baseStagePackageJson.build,
+            afterPack: afterPackHookPath,
+          },
+        }
+      : baseStagePackageJson;
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
@@ -761,11 +765,28 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   for (const entry of stageEntries) {
     const from = path.join(stageDistDir, entry);
     const stat = yield* fs.stat(from).pipe(Effect.catch(() => Effect.succeed(null)));
-    if (!stat || stat.type !== "File") continue;
-
     const to = path.join(options.outputDir, entry);
-    yield* fs.copyFile(from, to);
-    copiedArtifacts.push(to);
+    if (!stat) continue;
+
+    if (stat.type === "File") {
+      yield* fs.copyFile(from, to);
+      copiedArtifacts.push(to);
+      continue;
+    }
+
+    if (options.target === "dir" && stat.type === "Directory") {
+      if (options.platform === "mac") {
+        yield* runCommand(
+          ChildProcess.make({
+            cwd: repoRoot,
+            ...commandOutputOptions(options.verbose),
+          })`/usr/bin/ditto ${from} ${to}`,
+        );
+      } else {
+        yield* fs.copy(from, to);
+      }
+      copiedArtifacts.push(to);
+    }
   }
 
   if (copiedArtifacts.length === 0) {

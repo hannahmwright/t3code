@@ -1,4 +1,5 @@
 import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
+import { Duration, Option } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -295,6 +296,56 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
+  it("ignores stale close events from a previous websocket after reconnect succeeds", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        hasConnected: true,
+        phase: "connected",
+      });
+    });
+
+    await transport.reconnect();
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    const secondSocket = getSocket();
+    secondSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        hasConnected: true,
+        phase: "connected",
+        reconnectPhase: "idle",
+      });
+    });
+
+    firstSocket.close(1006, "stale close");
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        closeCode: null,
+        closeReason: null,
+        hasConnected: true,
+        phase: "connected",
+        reconnectPhase: "idle",
+      });
+    });
+    expect(getWsConnectionUiState(getWsConnectionStatus())).toBe("connected");
+
+    await transport.dispose();
+  });
+
   it("marks unary requests as slow until the first server ack arrives", async () => {
     const slowAckThresholdMs = 25;
     setSlowRpcAckThresholdMsForTests(slowAckThresholdMs);
@@ -350,6 +401,55 @@ describe("WsTransport", () => {
 
     await transport.dispose();
   }, 5_000);
+
+  it("times out hung unary requests, clears slow request state, and reconnects", async () => {
+    setSlowRpcAckThresholdMsForTests(10);
+    const transport = new WsTransport("ws://localhost:3020");
+
+    const requestPromise = transport.request(
+      (client) =>
+        client[WS_METHODS.serverUpsertKeybinding]({
+          command: "terminal.toggle",
+          key: "ctrl+k",
+        }),
+      {
+        timeout: Option.some(Duration.millis(25)),
+        timeoutMessage: "Request timed out.",
+        recoverOnTimeout: true,
+      },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(firstSocket.sent).toHaveLength(1);
+    });
+
+    const requestMessage = JSON.parse(firstSocket.sent[0] ?? "{}") as { id: string };
+    await waitFor(() => {
+      expect(getSlowRpcAckRequests()).toMatchObject([
+        {
+          requestId: requestMessage.id,
+          tag: WS_METHODS.serverUpsertKeybinding,
+        },
+      ]);
+    });
+
+    await expect(requestPromise).rejects.toThrow("Request timed out.");
+
+    await waitFor(() => {
+      expect(getSlowRpcAckRequests()).toEqual([]);
+      expect(sockets).toHaveLength(2);
+    });
+    expect(firstSocket.readyState).toBe(MockWebSocket.CLOSED);
+
+    await transport.dispose();
+  });
 
   it("sends unary RPC requests and resolves successful exits", async () => {
     const transport = new WsTransport("ws://localhost:3020");

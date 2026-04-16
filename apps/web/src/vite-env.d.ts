@@ -15,6 +15,7 @@ declare global {
     nativeApi?: NativeApi;
     desktopBridge?: DesktopBridge;
     __T3_APP_AUTH_ENABLED?: boolean;
+    __T3_MARK_BOOT_READY?: () => void;
     __T3_WS_TOKEN?: string;
   }
 }

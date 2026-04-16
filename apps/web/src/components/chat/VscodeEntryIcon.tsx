@@ -43,7 +43,9 @@ export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
     () => getIconCacheKey(props.pathValue, props.kind, props.theme),
     [props.kind, props.pathValue, props.theme],
   );
-  const [iconUrl, setIconUrl] = useState<string | null>(() => resolvedIconUrlCache.get(cacheKey) ?? null);
+  const [iconUrl, setIconUrl] = useState<string | null>(
+    () => resolvedIconUrlCache.get(cacheKey) ?? null,
+  );
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;

@@ -1,5 +1,6 @@
 import {
   Cause,
+  Data,
   Duration,
   Effect,
   Exit,
@@ -17,6 +18,7 @@ import {
   makeWsRpcProtocolClient,
   type WsRpcProtocolClient,
 } from "./rpc/protocol";
+import { clearAllTrackedRpcRequests } from "./rpc/requestLatencyState";
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
@@ -25,6 +27,8 @@ interface SubscribeOptions {
 
 interface RequestOptions {
   readonly timeout?: Option.Option<Duration.Input>;
+  readonly timeoutMessage?: string;
+  readonly recoverOnTimeout?: boolean;
 }
 
 const DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS = Duration.millis(250);
@@ -35,6 +39,10 @@ interface TransportSession {
   readonly clientScope: Scope.Closeable;
   readonly runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>;
 }
+
+class WsRequestTimeoutError extends Data.TaggedError("WsRequestTimeoutError")<{
+  readonly message: string;
+}> {}
 
 function formatErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -58,7 +66,7 @@ export class WsTransport {
 
   async request<TSuccess>(
     execute: (client: WsRpcProtocolClient) => Effect.Effect<TSuccess, Error, never>,
-    _options?: RequestOptions,
+    options?: RequestOptions,
   ): Promise<TSuccess> {
     if (this.disposed) {
       throw new Error("Transport disposed");
@@ -67,7 +75,34 @@ export class WsTransport {
     await this.tracingReady;
     const session = this.session;
     const client = await session.clientPromise;
-    return await session.runtime.runPromise(Effect.suspend(() => execute(client)));
+    const requestEffect = Option.match(options?.timeout ?? Option.none(), {
+      onNone: () => Effect.suspend(() => execute(client)),
+      onSome: (timeout) =>
+        Effect.suspend(() => execute(client)).pipe(
+          Effect.timeoutOption(timeout),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new WsRequestTimeoutError({
+                    message: options?.timeoutMessage ?? "Timed out waiting for the T3 server.",
+                  }),
+                ),
+              onSome: (value) => Effect.succeed(value),
+            }),
+          ),
+        ),
+    });
+
+    try {
+      return await session.runtime.runPromise(requestEffect);
+    } catch (error) {
+      if (error instanceof WsRequestTimeoutError && options?.recoverOnTimeout) {
+        clearAllTrackedRpcRequests();
+        await this.reconnect().catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   async requestStream<TValue>(

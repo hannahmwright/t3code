@@ -891,7 +891,10 @@ function SidebarMenuSkeleton({
 
   return (
     <div
-      className={cn("flex h-10 items-center gap-2.5 rounded-xl px-3 md:h-8 md:gap-2 md:rounded-lg md:px-2", className)}
+      className={cn(
+        "flex h-10 items-center gap-2.5 rounded-xl px-3 md:h-8 md:gap-2 md:rounded-lg md:px-2",
+        className,
+      )}
       data-sidebar="menu-skeleton"
       data-slot="sidebar-menu-skeleton"
       {...props}

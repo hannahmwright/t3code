@@ -29,7 +29,6 @@ import {
   FileSystem,
   Layer,
   ManagedRuntime,
-  Option,
   Path,
   Stream,
 } from "effect";
@@ -395,7 +394,12 @@ const buildAppUnderTest = (options?: {
               threads: [],
               updatedAt: new Date(0).toISOString(),
             }),
-          getThreadSnapshot: () => Effect.succeed(Option.none()),
+          getThreadSnapshot: () =>
+            Effect.succeed({
+              thread: null,
+              hasOlderMessages: false,
+              hasOlderActivities: false,
+            }),
           ...options?.layers?.projectionSnapshotQuery,
         }),
       ),
@@ -516,7 +520,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const path = yield* Path.Path;
       const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-auth-" });
       const indexPath = path.join(staticDir, "index.html");
-      yield* fileSystem.writeFileString(indexPath, "<html><head></head><body>router-auth-ok</body></html>");
+      yield* fileSystem.writeFileString(
+        indexPath,
+        "<html><head></head><body>router-auth-ok</body></html>",
+      );
 
       yield* buildAppUnderTest({
         config: {
@@ -2623,10 +2630,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const wsUrl = yield* getWsServerUrl("/ws");
         const events = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
-            client[WS_METHODS.subscribeOrchestrationDomainEvents]({}).pipe(
-              Stream.take(3),
-              Stream.runCollect,
-            ),
+            client[WS_METHODS.subscribeOrchestrationDomainEvents]({
+              fromSequenceExclusive: 1,
+            }).pipe(Stream.take(3), Stream.runCollect),
           ),
         );
 

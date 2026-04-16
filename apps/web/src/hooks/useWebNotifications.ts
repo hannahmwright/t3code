@@ -77,13 +77,7 @@ export function useWebNotifications() {
     return () => {
       cancelled = true;
     };
-  }, [
-    installationId,
-    nativeApi,
-    notificationsQuery,
-    permission,
-    supportsBrowserPush,
-  ]);
+  }, [installationId, nativeApi, notificationsQuery, permission, supportsBrowserPush]);
 
   const enable = async () => {
     if (!notificationsQuery.data?.vapidPublicKey) {

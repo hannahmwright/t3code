@@ -15,10 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import {
-  deriveShellBootstrapStateFromShellReadModel,
-  type ShellBootstrapState,
-} from "./store";
+import { deriveShellBootstrapStateFromShellReadModel, type ShellBootstrapState } from "./store";
 import {
   getLocalStorageItem,
   removeLocalStorageItem,
@@ -30,14 +27,7 @@ const BOOTSTRAP_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
 const BootstrapThreadSessionSchema = Schema.Struct({
   provider: ProviderKind,
-  status: Schema.Literals([
-    "disconnected",
-    "connecting",
-    "ready",
-    "running",
-    "error",
-    "closed",
-  ]),
+  status: Schema.Literals(["disconnected", "connecting", "ready", "running", "error", "closed"]),
   activeTurnId: Schema.optional(TurnId),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -100,7 +90,9 @@ export interface BootstrapCache {
   shellState: ShellBootstrapState | null;
 }
 
-function normalizeShellBootstrapState(shellState: ShellBootstrapStateFromCache): ShellBootstrapState {
+function normalizeShellBootstrapState(
+  shellState: ShellBootstrapStateFromCache,
+): ShellBootstrapState {
   return {
     projects: shellState.projects.map((project) => ({
       ...project,

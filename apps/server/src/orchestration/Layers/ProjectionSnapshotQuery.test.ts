@@ -470,7 +470,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       const snapshot = yield* snapshotQuery.getSnapshot();
-      const thread = snapshot.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-capped"));
+      const thread = snapshot.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-capped"),
+      );
 
       assert.isDefined(thread);
       if (!thread) {

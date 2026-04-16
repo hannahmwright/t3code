@@ -221,9 +221,7 @@ const autoBootstrapWelcome = Effect.gen(function* () {
           })
           .pipe(
             Effect.catch((error) =>
-              isDuplicateCreateInvariant(error, "thread.create")
-                ? Effect.void
-                : Effect.fail(error),
+              isDuplicateCreateInvariant(error, "thread.create") ? Effect.void : Effect.fail(error),
             ),
           );
         const refreshedThreadId =

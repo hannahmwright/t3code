@@ -343,16 +343,14 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </Group>
-      ) : (
-        allowAddScript ? (
-          <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
-            <PlusIcon className="size-3.5" />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              Add action
-            </span>
-          </Button>
-        ) : null
-      )}
+      ) : allowAddScript ? (
+        <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
+          <PlusIcon className="size-3.5" />
+          <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+            Add action
+          </span>
+        </Button>
+      ) : null}
 
       <Dialog
         onOpenChange={(open) => {

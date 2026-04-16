@@ -149,9 +149,7 @@ export const OrchestrationProject = Schema.Struct({
   title: TrimmedNonEmptyString,
   emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
-  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
+  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.NullOr(ModelSelection),
@@ -707,9 +705,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
-  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
+  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.NullOr(ModelSelection),
@@ -1084,22 +1080,16 @@ export type OrchestrationGetSnapshotResult = typeof OrchestrationGetSnapshotResu
 export const OrchestrationGetShellSnapshotInput = Schema.Struct({});
 export type OrchestrationGetShellSnapshotInput = typeof OrchestrationGetShellSnapshotInput.Type;
 const OrchestrationGetShellSnapshotResult = OrchestrationShellReadModel;
-export type OrchestrationGetShellSnapshotResult =
-  typeof OrchestrationGetShellSnapshotResult.Type;
+export type OrchestrationGetShellSnapshotResult = typeof OrchestrationGetShellSnapshotResult.Type;
 
 export const OrchestrationGetThreadSnapshotInput = Schema.Struct({
   threadId: ThreadId,
-  beforeMessageCreatedAt: Schema.NullOr(IsoDateTime).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
-  beforeActivityCreatedAt: Schema.NullOr(IsoDateTime).pipe(
-    Schema.withDecodingDefault(() => null),
-  ),
+  beforeMessageCreatedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  beforeActivityCreatedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
 });
 export type OrchestrationGetThreadSnapshotInput = typeof OrchestrationGetThreadSnapshotInput.Type;
 const OrchestrationGetThreadSnapshotResult = OrchestrationThreadSnapshot;
-export type OrchestrationGetThreadSnapshotResult =
-  typeof OrchestrationGetThreadSnapshotResult.Type;
+export type OrchestrationGetThreadSnapshotResult = typeof OrchestrationGetThreadSnapshotResult.Type;
 
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({ threadId: ThreadId }),
@@ -1123,6 +1113,12 @@ export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
 export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInput.Type;
+
+export const OrchestrationSubscribeDomainEventsInput = Schema.Struct({
+  fromSequenceExclusive: NonNegativeInt,
+});
+export type OrchestrationSubscribeDomainEventsInput =
+  typeof OrchestrationSubscribeDomainEventsInput.Type;
 
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;

@@ -48,6 +48,8 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
   socketUrl: null,
 });
 
+let latestWsConnectionAttemptId = 0;
+
 export const wsConnectionStatusAtom = Atom.make(INITIAL_WS_CONNECTION_STATUS).pipe(
   Atom.keepAlive,
   Atom.withLabel("ws-connection-status"),
@@ -85,8 +87,10 @@ export function getWsConnectionUiState(status: WsConnectionStatus): WsConnection
   return "reconnecting";
 }
 
-export function recordWsConnectionAttempt(socketUrl: string): WsConnectionStatus {
-  return updateWsConnectionStatus((current) => ({
+export function recordWsConnectionAttempt(socketUrl: string): number {
+  const attemptId = latestWsConnectionAttemptId + 1;
+  latestWsConnectionAttemptId = attemptId;
+  updateWsConnectionStatus((current) => ({
     ...current,
     attemptCount: current.attemptCount + 1,
     nextRetryAt: null,
@@ -95,41 +99,58 @@ export function recordWsConnectionAttempt(socketUrl: string): WsConnectionStatus
     reconnectPhase: "attempting",
     socketUrl,
   }));
+  return attemptId;
 }
 
-export function recordWsConnectionOpened(): WsConnectionStatus {
-  return updateWsConnectionStatus((current) => ({
-    ...current,
-    closeCode: null,
-    closeReason: null,
-    connectedAt: isoNow(),
-    disconnectedAt: null,
-    hasConnected: true,
-    nextRetryAt: null,
-    phase: "connected",
-    reconnectAttemptCount: 0,
-    reconnectPhase: "idle",
-  }));
+export function recordWsConnectionOpened(attemptId: number): WsConnectionStatus {
+  return updateWsConnectionStatus((current) => {
+    if (attemptId !== latestWsConnectionAttemptId) {
+      return current;
+    }
+
+    return {
+      ...current,
+      closeCode: null,
+      closeReason: null,
+      connectedAt: isoNow(),
+      disconnectedAt: null,
+      hasConnected: true,
+      nextRetryAt: null,
+      phase: "connected",
+      reconnectAttemptCount: 0,
+      reconnectPhase: "idle",
+    };
+  });
 }
 
-export function recordWsConnectionErrored(message?: string | null): WsConnectionStatus {
+export function recordWsConnectionErrored(
+  attemptId: number,
+  message?: string | null,
+): WsConnectionStatus {
   return updateWsConnectionStatus((current) =>
-    applyDisconnectState(current, {
-      lastError: message?.trim() ? message : current.lastError,
-      lastErrorAt: isoNow(),
-    }),
+    attemptId !== latestWsConnectionAttemptId
+      ? current
+      : applyDisconnectState(current, {
+          lastError: message?.trim() ? message : current.lastError,
+          lastErrorAt: isoNow(),
+        }),
   );
 }
 
-export function recordWsConnectionClosed(details?: {
-  readonly code?: number;
-  readonly reason?: string;
-}): WsConnectionStatus {
+export function recordWsConnectionClosed(
+  attemptId: number,
+  details?: {
+    readonly code?: number;
+    readonly reason?: string;
+  },
+): WsConnectionStatus {
   return updateWsConnectionStatus((current) =>
-    applyDisconnectState(current, {
-      closeCode: details?.code ?? current.closeCode,
-      closeReason: details?.reason?.trim() ? details.reason : current.closeReason,
-    }),
+    attemptId !== latestWsConnectionAttemptId
+      ? current
+      : applyDisconnectState(current, {
+          closeCode: details?.code ?? current.closeCode,
+          closeReason: details?.reason?.trim() ? details.reason : current.closeReason,
+        }),
   );
 }
 
@@ -170,6 +191,7 @@ export function exhaustWsReconnectIfStillWaiting(expectedNextRetryAt: string): W
 }
 
 export function resetWsConnectionStateForTests(): void {
+  latestWsConnectionAttemptId = 0;
   appAtomRegistry.set(wsConnectionStatusAtom, INITIAL_WS_CONNECTION_STATUS);
 }
 

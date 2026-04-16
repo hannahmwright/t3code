@@ -160,31 +160,28 @@ describe("NotificationsService helpers", () => {
       turnId,
       messageId: finalMessageId,
     });
-    const payload = buildNotificationPayload(
-      event,
-      {
-        ...readModel,
-        threads: readModel.threads.map((thread) =>
-          thread.id !== threadId
-            ? thread
-            : {
-                ...thread,
-                messages: [
-                  {
-                    id: finalMessageId,
-                    role: "assistant",
-                    text: "   Completed   assistant   reply   with extra whitespace.   ",
-                    attachments: [],
-                    turnId,
-                    streaming: false,
-                    createdAt: "2026-04-06T00:01:00.000Z",
-                    updatedAt: "2026-04-06T00:01:05.000Z",
-                  },
-                ],
-              },
-        ),
-      },
-    );
+    const payload = buildNotificationPayload(event, {
+      ...readModel,
+      threads: readModel.threads.map((thread) =>
+        thread.id !== threadId
+          ? thread
+          : {
+              ...thread,
+              messages: [
+                {
+                  id: finalMessageId,
+                  role: "assistant",
+                  text: "   Completed   assistant   reply   with extra whitespace.   ",
+                  attachments: [],
+                  turnId,
+                  streaming: false,
+                  createdAt: "2026-04-06T00:01:00.000Z",
+                  updatedAt: "2026-04-06T00:01:05.000Z",
+                },
+              ],
+            },
+      ),
+    });
 
     expect(payload).toEqual({
       title: "Ship the PWA",

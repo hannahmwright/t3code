@@ -485,10 +485,10 @@ function WebNotificationsRows() {
       ? "This browser does not support web push for this app."
       : permission === "denied"
         ? "Notifications are blocked in the browser for this site."
-        : notificationsState?.reason ??
+        : (notificationsState?.reason ??
           (notificationsState?.subscribed
             ? "Notifications are enabled on this device."
-            : "Notifications are currently off on this device.");
+            : "Notifications are currently off on this device."));
 
   return (
     <>
@@ -1106,7 +1106,8 @@ export function GeneralSettingsPanel() {
           title="Project sorting"
           description="Controls how projects are ordered in the sidebar. Workspace order follows the projects inside them."
           resetAction={
-            settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
+            settings.sidebarProjectSortOrder !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
               <SettingResetButton
                 label="project sorting"
                 onClick={() =>
@@ -1132,9 +1133,11 @@ export function GeneralSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                {(Object.entries(SIDEBAR_PROJECT_SORT_LABELS) as Array<
-                  [SidebarProjectSortOrder, string]
-                >).map(([value, label]) => (
+                {(
+                  Object.entries(SIDEBAR_PROJECT_SORT_LABELS) as Array<
+                    [SidebarProjectSortOrder, string]
+                  >
+                ).map(([value, label]) => (
                   <SelectItem hideIndicator key={value} value={value}>
                     {label}
                   </SelectItem>
@@ -1174,9 +1177,11 @@ export function GeneralSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                {(Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<
-                  [SidebarThreadSortOrder, string]
-                >).map(([value, label]) => (
+                {(
+                  Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<
+                    [SidebarThreadSortOrder, string]
+                  >
+                ).map(([value, label]) => (
                   <SelectItem hideIndicator key={value} value={value}>
                     {label}
                   </SelectItem>

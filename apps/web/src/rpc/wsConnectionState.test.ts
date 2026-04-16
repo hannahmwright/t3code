@@ -26,9 +26,9 @@ describe("wsConnectionState", () => {
   });
 
   it("treats a disconnected browser as offline once the websocket drops", () => {
-    recordWsConnectionAttempt("ws://localhost:3020/ws");
-    recordWsConnectionOpened();
-    recordWsConnectionClosed({ code: 1006, reason: "offline" });
+    const attemptId = recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened(attemptId);
+    recordWsConnectionClosed(attemptId, { code: 1006, reason: "offline" });
     setBrowserOnlineStatus(false);
 
     expect(getWsConnectionUiState(getWsConnectionStatus())).toBe("offline");
@@ -46,8 +46,8 @@ describe("wsConnectionState", () => {
   });
 
   it("schedules the next retry after a failed websocket attempt", () => {
-    recordWsConnectionAttempt("ws://localhost:3020/ws");
-    recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
+    const attemptId = recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionErrored(attemptId, "Unable to connect to the T3 server WebSocket.");
 
     const firstRetryDelayMs = getWsReconnectDelayMsForRetry(0);
     if (firstRetryDelayMs === null) {
@@ -63,8 +63,8 @@ describe("wsConnectionState", () => {
 
   it("marks the reconnect cycle as exhausted after the final attempt fails", () => {
     for (let attempt = 0; attempt < WS_RECONNECT_MAX_ATTEMPTS; attempt += 1) {
-      recordWsConnectionAttempt("ws://localhost:3020/ws");
-      recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
+      const attemptId = recordWsConnectionAttempt("ws://localhost:3020/ws");
+      recordWsConnectionErrored(attemptId, "Unable to connect to the T3 server WebSocket.");
     }
 
     expect(getWsConnectionStatus()).toMatchObject({
@@ -75,12 +75,12 @@ describe("wsConnectionState", () => {
   });
 
   it("can exhaust a stalled final retry window when no new attempt starts", () => {
-    recordWsConnectionAttempt("ws://localhost:3020/ws");
-    recordWsConnectionOpened();
+    const connectedAttemptId = recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened(connectedAttemptId);
 
     for (let attempt = 0; attempt < WS_RECONNECT_MAX_ATTEMPTS - 1; attempt += 1) {
-      recordWsConnectionAttempt("ws://localhost:3020/ws");
-      recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
+      const attemptId = recordWsConnectionAttempt("ws://localhost:3020/ws");
+      recordWsConnectionErrored(attemptId, "Unable to connect to the T3 server WebSocket.");
     }
 
     const finalRetryDelayMs = getWsReconnectDelayMsForRetry(WS_RECONNECT_MAX_ATTEMPTS - 2);
@@ -108,5 +108,23 @@ describe("wsConnectionState", () => {
       reconnectAttemptCount: WS_RECONNECT_MAX_ATTEMPTS,
       reconnectPhase: "exhausted",
     });
+  });
+
+  it("ignores stale socket events from an older websocket attempt", () => {
+    const firstAttemptId = recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened(firstAttemptId);
+
+    const secondAttemptId = recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened(secondAttemptId);
+    recordWsConnectionClosed(firstAttemptId, { code: 1006, reason: "stale close" });
+
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      hasConnected: true,
+      phase: "connected",
+      reconnectPhase: "idle",
+    });
+    expect(getWsConnectionUiState(getWsConnectionStatus())).toBe("connected");
   });
 });

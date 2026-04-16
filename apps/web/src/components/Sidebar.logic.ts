@@ -506,11 +506,11 @@ export function matchesSidebarThreadSearch<
   T extends Pick<Thread, "title"> & {
     messages?: ReadonlyArray<Pick<Thread["messages"][number], "text">>;
   },
->(
-  thread: T,
-  normalizedQuery: string,
-): boolean {
-  return normalizedQuery.length === 0 || resolveSidebarThreadSearchMatch(thread, normalizedQuery) !== null;
+>(thread: T, normalizedQuery: string): boolean {
+  return (
+    normalizedQuery.length === 0 ||
+    resolveSidebarThreadSearchMatch(thread, normalizedQuery) !== null
+  );
 }
 
 function toSortableTimestamp(iso: string | undefined): number | null {
@@ -631,7 +631,10 @@ export function shouldAutoExpandSidebarProject(input: {
     return false;
   }
 
-  return (input.now ?? Date.now()) - projectTimestamp <= (input.staleAfterMs ?? SIDEBAR_STALE_ACTIVITY_THRESHOLD_MS);
+  return (
+    (input.now ?? Date.now()) - projectTimestamp <=
+    (input.staleAfterMs ?? SIDEBAR_STALE_ACTIVITY_THRESHOLD_MS)
+  );
 }
 
 export function sortProjectsForSidebar<

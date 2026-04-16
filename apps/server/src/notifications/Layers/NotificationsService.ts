@@ -197,13 +197,15 @@ export const NotificationsServiceLive = Layer.effect(
         }
 
         const now = new Date().toISOString();
-        const existing = yield* pushSubscriptions.getByInstallationId({
-          installationId: input.installationId,
-        }).pipe(
-          Effect.mapError((cause) =>
-            toNotificationsError("Failed to load existing push subscription.", cause),
-          ),
-        );
+        const existing = yield* pushSubscriptions
+          .getByInstallationId({
+            installationId: input.installationId,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              toNotificationsError("Failed to load existing push subscription.", cause),
+            ),
+          );
 
         yield* pushSubscriptions
           .upsert({
@@ -221,9 +223,13 @@ export const NotificationsServiceLive = Layer.effect(
       });
 
     const removePushSubscription: NotificationsServiceShape["removePushSubscription"] = (input) =>
-      pushSubscriptions.deleteByInstallationId(input).pipe(
-        Effect.mapError((cause) => toNotificationsError("Failed to remove push subscription.", cause)),
-      );
+      pushSubscriptions
+        .deleteByInstallationId(input)
+        .pipe(
+          Effect.mapError((cause) =>
+            toNotificationsError("Failed to remove push subscription.", cause),
+          ),
+        );
 
     const updatePresence: NotificationsServiceShape["updatePresence"] = (input) =>
       Effect.gen(function* () {
@@ -284,11 +290,13 @@ export const NotificationsServiceLive = Layer.effect(
                     return;
                   }
 
-                  const subscriptions = yield* pushSubscriptions.listAll().pipe(
-                    Effect.mapError((cause) =>
-                      toNotificationsError("Failed to list push subscriptions.", cause),
-                    ),
-                  );
+                  const subscriptions = yield* pushSubscriptions
+                    .listAll()
+                    .pipe(
+                      Effect.mapError((cause) =>
+                        toNotificationsError("Failed to list push subscriptions.", cause),
+                      ),
+                    );
                   const nowMs = yield* clock.currentTimeMillis;
 
                   yield* Effect.forEach(
@@ -330,13 +338,15 @@ export const NotificationsServiceLive = Layer.effect(
     return {
       getState: (input: ServerNotificationsStateInput) =>
         Effect.gen(function* () {
-          const existing = yield* pushSubscriptions.getByInstallationId({
-            installationId: input.installationId,
-          }).pipe(
-            Effect.mapError((cause) =>
-              toNotificationsError("Failed to load notification state.", cause),
-            ),
-          );
+          const existing = yield* pushSubscriptions
+            .getByInstallationId({
+              installationId: input.installationId,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                toNotificationsError("Failed to load notification state.", cause),
+              ),
+            );
 
           return {
             supported: vapidDetails !== null,

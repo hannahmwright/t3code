@@ -72,9 +72,7 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   const isMobile = useIsMobile();
   const runningTerminalLabel =
-    runningTerminalCount === 1
-      ? "1 running terminal"
-      : `${runningTerminalCount} running terminals`;
+    runningTerminalCount === 1 ? "1 running terminal" : `${runningTerminalCount} running terminals`;
   const terminalTooltipLabel = !terminalAvailable
     ? "Terminal is unavailable until this thread has an active project."
     : terminalToggleShortcutLabel

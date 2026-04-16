@@ -164,7 +164,9 @@ describe("bootstrapCache", () => {
       createdAt: "2026-04-10T11:12:00.000Z",
       updatedAt: "2026-04-10T11:12:00.000Z",
     });
-    expect(readBootstrapCache()?.shellState?.threads[0]?.session).not.toHaveProperty("activeTurnId");
+    expect(readBootstrapCache()?.shellState?.threads[0]?.session).not.toHaveProperty(
+      "activeTurnId",
+    );
   });
 
   it("drops stale cache entries", () => {

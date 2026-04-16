@@ -19,7 +19,12 @@ import {
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
+import {
+  ACTIVE_RUNNING_THREAD_SNAPSHOT_POLL_INTERVAL_MS,
+  shouldRecoverActiveThreadSnapshot,
+} from "../threadSnapshotRecovery";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { isElectron } from "../env";
 
 const ChatView = lazy(() => import("../components/ChatView"));
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
@@ -196,6 +201,7 @@ function ChatThreadRouteView() {
     Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
   const routeThreadExists = threadExists || draftThreadExists;
+  const activeThread = useStore((store) => store.threads.find((thread) => thread.id === threadId));
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
   // TanStack Router keeps active route components mounted across param-only navigations
@@ -260,6 +266,74 @@ function ChatThreadRouteView() {
     };
   }, [bootstrapComplete, draftThreadExists, routeThreadExists, syncThreadSnapshot, threadId]);
 
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+
+    const shouldRecover = () =>
+      shouldRecoverActiveThreadSnapshot({
+        bootstrapComplete,
+        draftThreadExists,
+        routeThreadExists,
+        isElectron,
+        visibilityState: document.visibilityState,
+        thread: activeThread ?? null,
+      });
+    if (!shouldRecover()) {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshThreadSnapshot = () => {
+      if (!shouldRecover()) {
+        return;
+      }
+
+      void ensureNativeApi()
+        .orchestration.getThreadSnapshot({
+          threadId,
+          beforeMessageCreatedAt: null,
+          beforeActivityCreatedAt: null,
+        })
+        .then((snapshot) => {
+          if (!cancelled) {
+            syncThreadSnapshot(snapshot);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      refreshThreadSnapshot();
+    };
+
+    refreshThreadSnapshot();
+    const intervalId = window.setInterval(
+      refreshThreadSnapshot,
+      ACTIVE_RUNNING_THREAD_SNAPSHOT_POLL_INTERVAL_MS,
+    );
+    window.addEventListener("focus", refreshThreadSnapshot);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshThreadSnapshot);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [
+    activeThread,
+    bootstrapComplete,
+    draftThreadExists,
+    routeThreadExists,
+    syncThreadSnapshot,
+    threadId,
+  ]);
+
   if (!bootstrapComplete || !routeThreadExists) {
     return null;
   }
@@ -268,11 +342,11 @@ function ChatThreadRouteView() {
 
   if (!shouldUseDiffSheet) {
     return (
-        <>
-          <SidebarInset className="min-h-0 bg-background text-foreground max-md:min-h-[var(--app-shell-height)] max-md:overflow-visible max-md:overscroll-y-auto md:h-dvh md:overflow-hidden md:overscroll-y-none">
-            <LazyChatView threadId={threadId} />
-          </SidebarInset>
-          <DiffPanelInlineSidebar
+      <>
+        <SidebarInset className="min-h-0 bg-background text-foreground max-md:min-h-[var(--app-shell-height)] max-md:overflow-visible max-md:overscroll-y-auto md:h-dvh md:overflow-hidden md:overscroll-y-none">
+          <LazyChatView threadId={threadId} />
+        </SidebarInset>
+        <DiffPanelInlineSidebar
           diffOpen={diffOpen}
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}

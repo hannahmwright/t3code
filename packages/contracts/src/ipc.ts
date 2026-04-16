@@ -213,6 +213,7 @@ export interface NativeApi {
     onDomainEvent: (
       callback: (event: OrchestrationEvent) => void,
       options?: {
+        getFromSequenceExclusive?: () => number;
         onResubscribe?: () => void;
       },
     ) => () => void;

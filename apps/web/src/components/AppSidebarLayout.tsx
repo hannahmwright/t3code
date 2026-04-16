@@ -25,17 +25,14 @@ function DesktopCollapsedSidebarDock() {
   const pinnedProjectIds = useUiStateStore((store) => store.pinnedProjectIds);
   const appSettings = useSettings();
   const threadSortOrder = appSettings.sidebarThreadSortOrder;
-  const pinnedProjects = useMemo(
-    () => {
-      const pinnedProjectIdSet = new Set(pinnedProjectIds);
-      return orderItemsByPreferredIds({
-        items: projects.filter((project) => pinnedProjectIdSet.has(project.id)),
-        preferredIds: pinnedProjectIds,
-        getId: (project) => project.id,
-      }).slice(0, MAX_COLLAPSED_DOCK_PINNED_PROJECTS);
-    },
-    [pinnedProjectIds, projects],
-  );
+  const pinnedProjects = useMemo(() => {
+    const pinnedProjectIdSet = new Set(pinnedProjectIds);
+    return orderItemsByPreferredIds({
+      items: projects.filter((project) => pinnedProjectIdSet.has(project.id)),
+      preferredIds: pinnedProjectIds,
+      getId: (project) => project.id,
+    }).slice(0, MAX_COLLAPSED_DOCK_PINNED_PROJECTS);
+  }, [pinnedProjectIds, projects]);
 
   if (isMobile || open) {
     return null;

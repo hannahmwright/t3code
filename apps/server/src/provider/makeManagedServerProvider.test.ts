@@ -70,9 +70,7 @@ describe("makeManagedServerProvider", () => {
           yield* Effect.sleep("1 millis");
         }
 
-        yield* Effect.sync(() => {
-          throw new Error("background provider refresh did not complete");
-        });
+        return yield* Effect.die(new Error("background provider refresh did not complete"));
       }),
     ).pipe(Effect.runPromise);
   });

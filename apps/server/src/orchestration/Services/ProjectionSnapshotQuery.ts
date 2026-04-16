@@ -57,13 +57,11 @@ export interface ProjectionSnapshotQueryShape {
   /**
    * Read a recent-window snapshot for a single thread.
    */
-  readonly getThreadSnapshot: (
-    input: {
-      readonly threadId: ThreadId;
-      readonly beforeMessageCreatedAt: string | null;
-      readonly beforeActivityCreatedAt: string | null;
-    },
-  ) => Effect.Effect<OrchestrationThreadSnapshot, ProjectionRepositoryError>;
+  readonly getThreadSnapshot: (input: {
+    readonly threadId: ThreadId;
+    readonly beforeMessageCreatedAt: string | null;
+    readonly beforeActivityCreatedAt: string | null;
+  }) => Effect.Effect<OrchestrationThreadSnapshot, ProjectionRepositoryError>;
 
   /**
    * Read aggregate projection counts without hydrating the full read model.

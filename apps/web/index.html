@@ -139,7 +139,11 @@
         inset: 0;
         width: 42%;
         border-radius: inherit;
-        background: linear-gradient(90deg, var(--boot-accent), color-mix(in srgb, var(--boot-accent) 68%, white 32%));
+        background: linear-gradient(
+          90deg,
+          var(--boot-accent),
+          color-mix(in srgb, var(--boot-accent) 68%, white 32%)
+        );
         box-shadow: 0 0 24px rgba(70, 95, 255, 0.45);
         animation: boot-slide 1.4s ease-in-out infinite;
       }
@@ -220,6 +224,57 @@
       rel="stylesheet"
     />
     <title>T3 Code (Alpha)</title>
+    <script>
+      (() => {
+        const BOOT_READY_ATTRIBUTE = "data-t3-boot-ready";
+        const BOOT_RELOAD_MARKER_KEY = "t3code:boot-reload-marker";
+        const BOOT_TIMEOUT_MS = 12000;
+        const BOOT_RELOAD_COOLDOWN_MS = 60000;
+
+        window.__T3_MARK_BOOT_READY = () => {
+          document.documentElement.setAttribute(BOOT_READY_ATTRIBUTE, "true");
+          try {
+            sessionStorage.removeItem(BOOT_RELOAD_MARKER_KEY);
+          } catch {
+            // Ignore storage failures and leave the page running.
+          }
+        };
+
+        window.setTimeout(() => {
+          if (document.documentElement.getAttribute(BOOT_READY_ATTRIBUTE) === "true") {
+            return;
+          }
+
+          const splash = document.querySelector(".boot-splash");
+          if (!splash) {
+            return;
+          }
+
+          const nowMs = Date.now();
+          let lastReloadAtMs = 0;
+          try {
+            lastReloadAtMs = Number.parseInt(
+              sessionStorage.getItem(BOOT_RELOAD_MARKER_KEY) ?? "0",
+              10,
+            );
+          } catch {
+            // Ignore storage failures and fall through to a single reload attempt.
+          }
+
+          if (Number.isFinite(lastReloadAtMs) && nowMs - lastReloadAtMs < BOOT_RELOAD_COOLDOWN_MS) {
+            return;
+          }
+
+          try {
+            sessionStorage.setItem(BOOT_RELOAD_MARKER_KEY, String(nowMs));
+          } catch {
+            // Ignore storage failures and still attempt the reload.
+          }
+
+          window.location.reload();
+        }, BOOT_TIMEOUT_MS);
+      })();
+    </script>
   </head>
   <body>
     <div id="root">
@@ -230,9 +285,7 @@
           </div>
           <p class="boot-eyebrow">T3 Code</p>
           <h1 class="boot-title">Starting up</h1>
-          <p class="boot-copy">
-            Loading your workspace and reconnecting to the server.
-          </p>
+          <p class="boot-copy">Loading your workspace and reconnecting to the server.</p>
           <div class="boot-progress" aria-hidden="true"></div>
           <div class="boot-status">
             <span>Preparing your session</span>

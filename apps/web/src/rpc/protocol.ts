@@ -47,13 +47,13 @@ export function createWsRpcProtocolLayer(url?: string) {
   const trackingWebSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
     (socketUrl, protocols) => {
-      recordWsConnectionAttempt(socketUrl);
+      const attemptId = recordWsConnectionAttempt(socketUrl);
       const socket = new globalThis.WebSocket(socketUrl, protocols);
 
       socket.addEventListener(
         "open",
         () => {
-          recordWsConnectionOpened();
+          recordWsConnectionOpened(attemptId);
         },
         { once: true },
       );
@@ -61,7 +61,7 @@ export function createWsRpcProtocolLayer(url?: string) {
         "error",
         () => {
           clearAllTrackedRpcRequests();
-          recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
+          recordWsConnectionErrored(attemptId, "Unable to connect to the T3 server WebSocket.");
         },
         { once: true },
       );
@@ -69,7 +69,7 @@ export function createWsRpcProtocolLayer(url?: string) {
         "close",
         (event) => {
           clearAllTrackedRpcRequests();
-          recordWsConnectionClosed({
+          recordWsConnectionClosed(attemptId, {
             code: event.code,
             reason: event.reason,
           });

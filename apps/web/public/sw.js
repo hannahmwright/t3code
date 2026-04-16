@@ -1,4 +1,4 @@
-const CACHE_NAME = "t3code-shell-v4";
+const CACHE_NAME = "t3code-shell-v5";
 const APP_SHELL_PATHS = [
   "/",
   "/manifest.webmanifest",
@@ -67,20 +67,16 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       (async () => {
         const cache = await caches.open(CACHE_NAME);
-        const cachedResponse = (await cache.match(request)) || (await cache.match("/"));
-        const networkRefresh = updateNavigationCache(request).catch(() => null);
+        try {
+          return await updateNavigationCache(request);
+        } catch {
+          const cachedResponse = (await cache.match(request)) || (await cache.match("/"));
+          if (cachedResponse) {
+            return cachedResponse;
+          }
 
-        if (cachedResponse) {
-          void networkRefresh;
-          return cachedResponse;
+          return Response.error();
         }
-
-        const networkResponse = await networkRefresh;
-        if (networkResponse) {
-          return networkResponse;
-        }
-
-        return Response.error();
       })(),
     );
     return;

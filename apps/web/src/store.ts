@@ -223,7 +223,8 @@ function mapThread(thread: OrchestrationThread): Thread {
 
 function sortMessages(messages: ReadonlyArray<ChatMessage>): ChatMessage[] {
   return [...messages].toSorted(
-    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
   );
 }
 
@@ -654,9 +655,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
   };
 }
 
-export function deriveShellBootstrapState(
-  readModel: OrchestrationReadModel,
-): ShellBootstrapState {
+export function deriveShellBootstrapState(readModel: OrchestrationReadModel): ShellBootstrapState {
   const projects = readModel.projects
     .filter((project) => project.deletedAt === null)
     .map(mapProject);
@@ -734,30 +733,33 @@ export function hydrateShellBootstrapState(
     ...project,
     scripts: mapProjectScripts(project.scripts),
   }));
-  const threads = shellState.threads.map((thread) => ({
-    id: thread.id,
-    codexThreadId: null,
-    projectId: thread.projectId,
-    title: thread.title,
-    modelSelection: thread.modelSelection,
-    runtimeMode: thread.runtimeMode,
-    interactionMode: thread.interactionMode,
-    session: thread.session,
-    messages: [],
-    proposedPlans: [],
-    error: thread.error,
-    createdAt: thread.createdAt,
-    archivedAt: thread.archivedAt,
-    updatedAt: thread.updatedAt,
-    latestTurn: thread.latestTurn,
-    pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
-    branch: thread.branch,
-    worktreePath: thread.worktreePath,
-    turnDiffSummaries: [],
-    activities: [],
-    hasOlderMessages: false,
-    hasOlderActivities: false,
-  }) satisfies Thread);
+  const threads = shellState.threads.map(
+    (thread) =>
+      ({
+        id: thread.id,
+        codexThreadId: null,
+        projectId: thread.projectId,
+        title: thread.title,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        session: thread.session,
+        messages: [],
+        proposedPlans: [],
+        error: thread.error,
+        createdAt: thread.createdAt,
+        archivedAt: thread.archivedAt,
+        updatedAt: thread.updatedAt,
+        latestTurn: thread.latestTurn,
+        pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        turnDiffSummaries: [],
+        activities: [],
+        hasOlderMessages: false,
+        hasOlderActivities: false,
+      }) satisfies Thread,
+  );
   const sidebarThreadsById = Object.fromEntries(
     shellState.threads.map((thread) => [
       thread.id,
@@ -817,18 +819,17 @@ export function syncThreadSnapshot(
           proposedPlans: [...existingThread.proposedPlans, ...nextThread.proposedPlans].filter(
             (plan, index, plans) => index === plans.findIndex((entry) => entry.id === plan.id),
           ),
-          turnDiffSummaries: sortTurnDiffSummaries([
-            ...existingThread.turnDiffSummaries,
-            ...nextThread.turnDiffSummaries,
-          ].filter(
-            (summary, index, summaries) =>
-              index ===
-              summaries.findIndex(
-                (entry) =>
-                  entry.turnId === summary.turnId &&
-                  entry.checkpointTurnCount === summary.checkpointTurnCount,
-              ),
-          )),
+          turnDiffSummaries: sortTurnDiffSummaries(
+            [...existingThread.turnDiffSummaries, ...nextThread.turnDiffSummaries].filter(
+              (summary, index, summaries) =>
+                index ===
+                summaries.findIndex(
+                  (entry) =>
+                    entry.turnId === summary.turnId &&
+                    entry.checkpointTurnCount === summary.checkpointTurnCount,
+                ),
+            ),
+          ),
           activities: [...existingThread.activities, ...nextThread.activities]
             .filter(
               (activity, index, activities) =>

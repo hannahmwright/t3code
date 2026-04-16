@@ -5,9 +5,7 @@ import { registerPwaServiceWorker } from "./pwa";
 
 const INSTALLATION_ID_STORAGE_KEY = "t3code:installation-id:v1";
 
-export type BrowserNotificationPermissionState =
-  | NotificationPermission
-  | "unsupported";
+export type BrowserNotificationPermissionState = NotificationPermission | "unsupported";
 
 export function getNotificationPermissionState(): BrowserNotificationPermissionState {
   if (typeof window === "undefined" || !("Notification" in window)) {

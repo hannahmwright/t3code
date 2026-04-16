@@ -1,5 +1,5 @@
 import type { ServerProvider } from "@t3tools/contracts";
-import { Duration, Effect, PubSub, Ref, Scope, Stream } from "effect";
+import { Duration, Effect, Exit, PubSub, Ref, Scope, Stream } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { ServerProviderShape } from "./Services/ServerProvider";
@@ -15,6 +15,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly refreshInterval?: Duration.Input;
 }): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
+  const providerScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() => Scope.close(providerScope, Exit.void));
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
@@ -52,10 +54,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     }
 
     yield* Ref.set(settingsRef, nextSettings);
-    const nextSettingsVersion = yield* Ref.updateAndGet(settingsVersionRef, (version) => version + 1);
+    const nextSettingsVersion = yield* Ref.updateAndGet(
+      settingsVersionRef,
+      (version) => version + 1,
+    );
     const provisionalSnapshot = input.makeInitialSnapshot(nextSettings);
     yield* publishSnapshot(provisionalSnapshot);
-    yield* refreshSnapshot(nextSettingsVersion).pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
+    yield* refreshSnapshot(nextSettingsVersion).pipe(
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(providerScope),
+    );
     return provisionalSnapshot;
   });
 

@@ -276,9 +276,10 @@ export const appAuthLoginRouteLayer = HttpRouter.add(
       );
     }
 
-    const body = (yield* request.json.pipe(Effect.catch(() => Effect.succeed(null)))) as
-      | Record<string, unknown>
-      | null;
+    const body = (yield* request.json.pipe(Effect.catch(() => Effect.succeed(null)))) as Record<
+      string,
+      unknown
+    > | null;
     const username = typeof body?.["username"] === "string" ? body.username.trim() : "";
     const password = typeof body?.["password"] === "string" ? body.password : "";
     const remember = body?.["remember"] !== false;
@@ -314,16 +315,16 @@ export const appAuthLoginRouteLayer = HttpRouter.add(
     }
 
     const response = yield* HttpServerResponse.json(
-        {
-          ok: true,
-          authenticated: true,
-          enabled: true,
-          username,
-        },
-        {
-          status: 200,
-          headers: withNoStoreHeaders(),
-        },
+      {
+        ok: true,
+        authenticated: true,
+        enabled: true,
+        username,
+      },
+      {
+        status: 200,
+        headers: withNoStoreHeaders(),
+      },
     );
     return withAppAuthCookie(response, request, token, remember, config);
   }),
