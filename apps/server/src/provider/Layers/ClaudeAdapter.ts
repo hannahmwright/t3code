@@ -42,6 +42,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   getEffectiveClaudeCodeEffort,
+  getKnownClaudeContextWindow,
   getReasoningEffortOptions,
   resolveReasoningEffortForProvider,
   supportsClaudeFastMode,
@@ -261,13 +262,18 @@ function asRuntimeItemId(value: string): RuntimeItemId {
   return RuntimeItemId.makeUnsafe(value);
 }
 
-function maxClaudeContextWindowFromModelUsage(modelUsage: unknown): number | undefined {
+function resolveClaudeContextWindow(
+  model: string | null | undefined,
+  modelUsage: unknown,
+): number | undefined {
+  const knownContextWindow = getKnownClaudeContextWindow(model);
   if (!modelUsage || typeof modelUsage !== "object") {
-    return undefined;
+    return knownContextWindow ?? undefined;
   }
 
-  let maxContextWindow: number | undefined;
-  for (const value of Object.values(modelUsage as Record<string, unknown>)) {
+  let maxContextWindow = knownContextWindow ?? 0;
+  for (const [modelName, value] of Object.entries(modelUsage as Record<string, unknown>)) {
+    maxContextWindow = Math.max(maxContextWindow, getKnownClaudeContextWindow(modelName) ?? 0);
     if (!value || typeof value !== "object") {
       continue;
     }
@@ -279,10 +285,10 @@ function maxClaudeContextWindowFromModelUsage(modelUsage: unknown): number | und
     ) {
       continue;
     }
-    maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
+    maxContextWindow = Math.max(maxContextWindow, contextWindow);
   }
 
-  return maxContextWindow;
+  return maxContextWindow > 0 ? maxContextWindow : undefined;
 }
 
 function normalizeClaudeTokenUsage(
@@ -1367,7 +1373,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       Effect.gen(function* () {
         const resultUsage =
           result?.usage && typeof result.usage === "object" ? { ...result.usage } : undefined;
-        const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
+        const resultContextWindow = resolveClaudeContextWindow(
+          context.session.model,
+          result?.modelUsage,
+        );
         const usageSnapshot = normalizeClaudeTokenUsage(
           resultUsage,
           resultContextWindow ?? context.lastKnownContextWindow,
@@ -2793,7 +2802,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           turns: [],
           inFlightTools,
           turnState: undefined,
-          lastKnownContextWindow: undefined,
+          lastKnownContextWindow: getKnownClaudeContextWindow(input.model) ?? undefined,
           lastAssistantUuid: resumeState?.resumeSessionAt,
           lastThreadStartedId: undefined,
           stopped: false,

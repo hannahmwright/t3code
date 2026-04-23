@@ -45,6 +45,20 @@ export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
 const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 
+export const ServerRuntimeMode = Schema.Literals(["web", "desktop"]);
+export type ServerRuntimeMode = typeof ServerRuntimeMode.Type;
+
+export const ServerDiagnostics = Schema.Struct({
+  mode: ServerRuntimeMode,
+  port: Schema.Number,
+  host: Schema.NullOr(TrimmedNonEmptyString),
+  baseDir: TrimmedNonEmptyString,
+  stateDir: TrimmedNonEmptyString,
+  staticDir: Schema.NullOr(TrimmedNonEmptyString),
+  authEnabled: Schema.Boolean,
+});
+export type ServerDiagnostics = typeof ServerDiagnostics.Type;
+
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
@@ -52,6 +66,7 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  diagnostics: ServerDiagnostics,
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

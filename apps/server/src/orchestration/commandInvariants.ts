@@ -1,10 +1,12 @@
 import type {
   OrchestrationCommand,
+  OrchestrationWorkbook,
   OrchestrationProject,
   OrchestrationReadModel,
   OrchestrationThread,
   ProjectId,
   ThreadId,
+  WorkbookId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
@@ -29,6 +31,24 @@ export function findProjectById(
   projectId: ProjectId,
 ): OrchestrationProject | undefined {
   return readModel.projects.find((project) => project.id === projectId);
+}
+
+export function findWorkbookById(
+  readModel: OrchestrationReadModel,
+  workbookId: WorkbookId,
+): OrchestrationWorkbook | undefined {
+  return (readModel.workbooks ?? []).find((workbook) => workbook.id === workbookId);
+}
+
+export function findActiveWorkbookByName(
+  readModel: OrchestrationReadModel,
+  workbookName: string,
+): OrchestrationWorkbook | undefined {
+  const normalizedName = workbookName.trim().toLowerCase();
+  return (readModel.workbooks ?? []).find(
+    (workbook) =>
+      workbook.deletedAt === null && workbook.name.trim().toLowerCase() === normalizedName,
+  );
 }
 
 export function listThreadsByProjectId(
@@ -68,6 +88,54 @@ export function requireProjectAbsent(input: {
       input.command.type,
       `Project '${input.projectId}' already exists and cannot be created twice.`,
     ),
+  );
+}
+
+export function requireWorkbook(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workbookId: WorkbookId;
+}): Effect.Effect<OrchestrationWorkbook, OrchestrationCommandInvariantError> {
+  const workbook = findWorkbookById(input.readModel, input.workbookId);
+  if (workbook && workbook.deletedAt === null) {
+    return Effect.succeed(workbook);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Workbook '${input.workbookId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireWorkbookAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workbookId: WorkbookId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findWorkbookById(input.readModel, input.workbookId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Workbook '${input.workbookId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+export function requireWorkbookNameAvailable(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workbookName: string;
+  readonly excludingWorkbookId?: WorkbookId | null;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const existing = findActiveWorkbookByName(input.readModel, input.workbookName);
+  if (!existing || existing.id === input.excludingWorkbookId) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(input.command.type, `Workbook name '${input.workbookName}' is already in use.`),
   );
 }
 

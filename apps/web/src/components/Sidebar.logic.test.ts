@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildProjectGroupUpdatePlan,
+  groupProjectsForSidebar,
+  getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  normalizeWorkbookFields,
+  resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -12,7 +17,7 @@ import {
   sortProjectsForSidebar,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, WorkbookId } from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -342,10 +347,104 @@ describe("getVisibleThreadsForProject", () => {
   });
 });
 
+describe("resolveAdjacentThreadId", () => {
+  it("resolves adjacent thread ids in ordered sidebar traversal", () => {
+    const threadIds = [
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+    ];
+
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: threadIds[1] ?? null,
+        direction: "previous",
+      }),
+    ).toBe(threadIds[0]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: threadIds[1] ?? null,
+        direction: "next",
+      }),
+    ).toBe(threadIds[2]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: null,
+        direction: "next",
+      }),
+    ).toBe(threadIds[0]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: null,
+        direction: "previous",
+      }),
+    ).toBe(threadIds[2]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: threadIds[0] ?? null,
+        direction: "previous",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("getVisibleSidebarThreadIds", () => {
+  it("returns only the rendered visible thread order across projects", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          renderedThreadIds: [
+            ThreadId.makeUnsafe("thread-12"),
+            ThreadId.makeUnsafe("thread-11"),
+            ThreadId.makeUnsafe("thread-10"),
+          ],
+        },
+        {
+          renderedThreadIds: [ThreadId.makeUnsafe("thread-8"), ThreadId.makeUnsafe("thread-6")],
+        },
+      ]),
+    ).toEqual([
+      ThreadId.makeUnsafe("thread-12"),
+      ThreadId.makeUnsafe("thread-11"),
+      ThreadId.makeUnsafe("thread-10"),
+      ThreadId.makeUnsafe("thread-8"),
+      ThreadId.makeUnsafe("thread-6"),
+    ]);
+  });
+
+  it("skips threads from collapsed projects whose thread panels are not shown", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          shouldShowThreadPanel: false,
+          renderedThreadIds: [
+            ThreadId.makeUnsafe("thread-hidden-2"),
+            ThreadId.makeUnsafe("thread-hidden-1"),
+          ],
+        },
+        {
+          shouldShowThreadPanel: true,
+          renderedThreadIds: [ThreadId.makeUnsafe("thread-12"), ThreadId.makeUnsafe("thread-11")],
+        },
+      ]),
+    ).toEqual([ThreadId.makeUnsafe("thread-12"), ThreadId.makeUnsafe("thread-11")]);
+  });
+});
+
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
     id: ProjectId.makeUnsafe("project-1"),
     name: "Project",
+    emoji: null,
+    color: null,
+    workbookId: null,
+    groupName: null,
+    groupEmoji: null,
     cwd: "/tmp/project",
     model: "gpt-5.4",
     expanded: true,
@@ -625,5 +724,180 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+  });
+});
+
+describe("groupProjectsForSidebar", () => {
+  it("groups workbook projects under a shared parent while leaving standalone projects alone", () => {
+    const grouped = groupProjectsForSidebar({
+      projects: [
+        makeProject({
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "CADE",
+          workbookId: WorkbookId.makeUnsafe("workbook-tst"),
+          groupName: "TST",
+          groupEmoji: "⚾️",
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-2"),
+          name: "Encore",
+          workbookId: WorkbookId.makeUnsafe("workbook-tst"),
+          groupName: "TST",
+          groupEmoji: null,
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-3"),
+          name: "Server",
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-4"),
+          name: "GoldenHour",
+          workbookId: WorkbookId.makeUnsafe("workbook-vtg"),
+          groupName: "VTG",
+          groupEmoji: "✨",
+        }),
+      ],
+    });
+
+    expect(grouped).toEqual([
+      {
+        key: "group:workbook-tst",
+        workbookId: WorkbookId.makeUnsafe("workbook-tst"),
+        name: "TST",
+        emoji: "⚾️",
+        projects: [
+          expect.objectContaining({ id: ProjectId.makeUnsafe("project-1") }),
+          expect.objectContaining({ id: ProjectId.makeUnsafe("project-2") }),
+        ],
+      },
+      {
+        key: "project:project-3",
+        workbookId: null,
+        name: null,
+        emoji: null,
+        projects: [expect.objectContaining({ id: ProjectId.makeUnsafe("project-3") })],
+      },
+      {
+        key: "group:workbook-vtg",
+        workbookId: WorkbookId.makeUnsafe("workbook-vtg"),
+        name: "VTG",
+        emoji: "✨",
+        projects: [expect.objectContaining({ id: ProjectId.makeUnsafe("project-4") })],
+      },
+    ]);
+  });
+
+  it("includes empty persisted workbooks", () => {
+    const grouped = groupProjectsForSidebar({
+      projects: [],
+      workbooks: [
+        {
+          id: WorkbookId.makeUnsafe("workbook-empty"),
+          name: "Studio",
+          emoji: "🎧",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(grouped).toEqual([
+      {
+        key: "group:workbook-empty",
+        workbookId: WorkbookId.makeUnsafe("workbook-empty"),
+        name: "Studio",
+        emoji: "🎧",
+        projects: [],
+      },
+    ]);
+  });
+});
+
+describe("buildProjectGroupUpdatePlan", () => {
+  it("renames a workbook, updates its emoji, and ungroups removed projects", () => {
+    const updates = buildProjectGroupUpdatePlan({
+      projects: [
+        makeProject({
+          id: ProjectId.makeUnsafe("project-1"),
+          groupName: "TST",
+          groupEmoji: "⚾️",
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-2"),
+          groupName: "TST",
+          groupEmoji: "⚾️",
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-3"),
+          groupName: "VTG",
+          groupEmoji: "✨",
+        }),
+      ],
+      originalGroupName: "TST",
+      nextGroupName: "Studio",
+      nextGroupEmoji: "🎧",
+      selectedProjectIds: [ProjectId.makeUnsafe("project-1"), ProjectId.makeUnsafe("project-3")],
+    });
+
+    expect(updates).toEqual([
+      {
+        projectId: ProjectId.makeUnsafe("project-1"),
+        patch: { groupName: "Studio", groupEmoji: "🎧" },
+      },
+      {
+        projectId: ProjectId.makeUnsafe("project-2"),
+        patch: { groupName: null, groupEmoji: null },
+      },
+      {
+        projectId: ProjectId.makeUnsafe("project-3"),
+        patch: { groupName: "Studio", groupEmoji: "🎧" },
+      },
+    ]);
+  });
+
+  it("creates a new workbook from selected projects only", () => {
+    const updates = buildProjectGroupUpdatePlan({
+      projects: [
+        makeProject({ id: ProjectId.makeUnsafe("project-1") }),
+        makeProject({ id: ProjectId.makeUnsafe("project-2"), groupName: "Existing" }),
+      ],
+      originalGroupName: null,
+      nextGroupName: "Launch",
+      nextGroupEmoji: "",
+      selectedProjectIds: [ProjectId.makeUnsafe("project-1")],
+    });
+
+    expect(updates).toEqual([
+      {
+        projectId: ProjectId.makeUnsafe("project-1"),
+        patch: { groupName: "Launch" },
+      },
+    ]);
+  });
+});
+
+describe("normalizeWorkbookFields", () => {
+  it("clears workbook emoji when the workbook name is blank", () => {
+    expect(
+      normalizeWorkbookFields({
+        groupName: "   ",
+        groupEmoji: "  :rocket:  ",
+      }),
+    ).toEqual({
+      groupName: null,
+      groupEmoji: null,
+    });
+  });
+
+  it("preserves trimmed workbook metadata", () => {
+    expect(
+      normalizeWorkbookFields({
+        groupName: "  Voice  ",
+        groupEmoji: "  🎤  ",
+      }),
+    ).toEqual({
+      groupName: "Voice",
+      groupEmoji: "🎤",
+    });
   });
 });

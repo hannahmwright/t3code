@@ -13,8 +13,51 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
+function readBootstrapToken(rawWsUrl: string | null): string | null {
+  if (!rawWsUrl) {
+    return null;
+  }
+
+  try {
+    return new URL(rawWsUrl).searchParams.get("token");
+  } catch {
+    return null;
+  }
+}
+
+function toHttpBaseUrl(rawWsUrl: string | null): string | null {
+  if (!rawWsUrl) {
+    return null;
+  }
+
+  try {
+    const url = new URL(rawWsUrl);
+    if (url.protocol === "ws:") {
+      url.protocol = "http:";
+    } else if (url.protocol === "wss:") {
+      url.protocol = "https:";
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
+  getLocalEnvironmentBootstrap: () => {
+    if (!wsUrl) {
+      return null;
+    }
+
+    const bootstrapToken = readBootstrapToken(wsUrl);
+    return {
+      label: "Local desktop",
+      httpBaseUrl: toHttpBaseUrl(wsUrl),
+      wsBaseUrl: wsUrl,
+      ...(bootstrapToken ? { bootstrapToken } : {}),
+    };
+  },
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
   setTheme: (theme) => ipcRenderer.invoke(SET_THEME_CHANNEL, theme),

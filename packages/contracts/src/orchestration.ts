@@ -13,6 +13,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
+  WorkbookId,
 } from "./baseSchemas";
 
 export const ORCHESTRATION_WS_METHODS = {
@@ -140,9 +141,21 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const ProjectAccentColor = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^#[0-9a-fA-F]{6}$/),
+);
+export type ProjectAccentColor = typeof ProjectAccentColor.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
+  emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  workbookId: Schema.optional(Schema.NullOr(WorkbookId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  groupEmoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
@@ -151,6 +164,16 @@ export const OrchestrationProject = Schema.Struct({
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type OrchestrationProject = typeof OrchestrationProject.Type;
+
+export const OrchestrationWorkbook = Schema.Struct({
+  id: WorkbookId,
+  name: TrimmedNonEmptyString,
+  emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+});
+export type OrchestrationWorkbook = typeof OrchestrationWorkbook.Type;
 
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
@@ -203,6 +226,7 @@ export const OrchestrationSession = Schema.Struct({
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   activeTurnId: Schema.NullOr(TurnId),
+  canInterrupt: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
 });
@@ -294,17 +318,48 @@ export type OrchestrationThread = typeof OrchestrationThread.Type;
 
 export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
+  workbooks: Schema.optional(Schema.Array(OrchestrationWorkbook)).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
 
+const WorkbookCreateCommand = Schema.Struct({
+  type: Schema.Literal("workbook.create"),
+  commandId: CommandId,
+  workbookId: WorkbookId,
+  name: TrimmedNonEmptyString,
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  createdAt: IsoDateTime,
+});
+
+const WorkbookMetaUpdateCommand = Schema.Struct({
+  type: Schema.Literal("workbook.meta.update"),
+  commandId: CommandId,
+  workbookId: WorkbookId,
+  name: Schema.optional(TrimmedNonEmptyString),
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
+const WorkbookDeleteCommand = Schema.Struct({
+  type: Schema.Literal("workbook.delete"),
+  commandId: CommandId,
+  workbookId: WorkbookId,
+});
+
 export const ProjectCreateCommand = Schema.Struct({
   type: Schema.Literal("project.create"),
   commandId: CommandId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  workbookId: Schema.optional(Schema.NullOr(WorkbookId)),
+  groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
@@ -315,8 +370,13 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  workbookId: Schema.optional(Schema.NullOr(WorkbookId)),
+  groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
-  defaultModel: Schema.optional(TrimmedNonEmptyString),
+  defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -460,6 +520,9 @@ const ThreadSessionStopCommand = Schema.Struct({
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
+  WorkbookCreateCommand,
+  WorkbookMetaUpdateCommand,
+  WorkbookDeleteCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -479,6 +542,9 @@ export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
 
 export const ClientOrchestrationCommand = Schema.Union([
+  WorkbookCreateCommand,
+  WorkbookMetaUpdateCommand,
+  WorkbookDeleteCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -579,6 +645,9 @@ export const OrchestrationCommand = Schema.Union([
 export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 
 export const OrchestrationEventType = Schema.Literals([
+  "workbook.created",
+  "workbook.meta-updated",
+  "workbook.deleted",
   "project.created",
   "project.meta-updated",
   "project.deleted",
@@ -602,16 +671,43 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["workbook", "project", "thread"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
+
+export const WorkbookCreatedPayload = Schema.Struct({
+  workbookId: WorkbookId,
+  name: TrimmedNonEmptyString,
+  emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const WorkbookMetaUpdatedPayload = Schema.Struct({
+  workbookId: WorkbookId,
+  name: Schema.optional(TrimmedNonEmptyString),
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  updatedAt: IsoDateTime,
+});
+
+export const WorkbookDeletedPayload = Schema.Struct({
+  workbookId: WorkbookId,
+  deletedAt: IsoDateTime,
+});
 
 export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  workbookId: Schema.optional(Schema.NullOr(WorkbookId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  groupName: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  groupEmoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   workspaceRoot: TrimmedNonEmptyString,
-  defaultModel: Schema.NullOr(TrimmedNonEmptyString),
-  scripts: Schema.Array(ProjectScript),
+  defaultModel: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  scripts: Schema.Array(ProjectScript).pipe(Schema.withDecodingDefault(() => [])),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -619,6 +715,11 @@ export const ProjectCreatedPayload = Schema.Struct({
 export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
+  emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  workbookId: Schema.optional(Schema.NullOr(WorkbookId)),
+  groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -776,7 +877,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([WorkbookId, ProjectId, ThreadId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -785,6 +886,21 @@ const EventBaseFields = {
 } as const;
 
 export const OrchestrationEvent = Schema.Union([
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("workbook.created"),
+    payload: WorkbookCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("workbook.meta-updated"),
+    payload: WorkbookMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("workbook.deleted"),
+    payload: WorkbookDeletedPayload,
+  }),
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("project.created"),

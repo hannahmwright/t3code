@@ -10,6 +10,7 @@ import {
   OrchestrationEventType,
   ProjectId,
   ThreadId,
+  WorkbookId,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -32,7 +33,7 @@ const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMeta
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  streamId: Schema.Union([ProjectId, ThreadId]),
+  streamId: Schema.Union([WorkbookId, ProjectId, ThreadId]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
@@ -43,12 +44,17 @@ const AppendEventRequestSchema = Schema.Struct({
   metadataJson: EventMetadataFromJsonString,
 });
 
+const PersistedEventType = Schema.Union([
+  OrchestrationEventType,
+  Schema.Literal("thread.archived"),
+]);
+
 const OrchestrationEventPersistedRowSchema = Schema.Struct({
   sequence: NonNegativeInt,
   eventId: EventId,
-  type: OrchestrationEventType,
+  type: PersistedEventType,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([WorkbookId, ProjectId, ThreadId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -63,6 +69,138 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
 });
 const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 const READ_PAGE_SIZE = 500;
+
+function asObjectRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function getLegacyModelSelection(
+  value: unknown,
+): { readonly model: string; readonly provider?: unknown; readonly options?: unknown } | null {
+  const selection = asObjectRecord(value);
+  if (selection === null || typeof selection.model !== "string") {
+    return null;
+  }
+  return {
+    model: selection.model,
+    provider: selection.provider,
+    options: selection.options,
+  };
+}
+
+function getLegacyWorkbookId(groupName: unknown): WorkbookId | null {
+  if (typeof groupName !== "string") {
+    return null;
+  }
+  const normalizedGroupName = groupName.trim().toLowerCase();
+  if (normalizedGroupName.length === 0) {
+    return null;
+  }
+  return WorkbookId.makeUnsafe(`legacy:${normalizedGroupName}`);
+}
+
+function normalizeLegacyEventRow(
+  row: Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema>,
+): Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema> {
+  const payload = asObjectRecord(row.payload);
+  if (payload === null) {
+    return row;
+  }
+
+  switch (row.type) {
+    case "project.created":
+    case "project.meta-updated": {
+      const selection = getLegacyModelSelection(payload.defaultModelSelection);
+      const workbookId =
+        payload.workbookId !== undefined
+          ? payload.workbookId
+          : getLegacyWorkbookId(payload.groupName);
+      return {
+        ...row,
+        payload: {
+          ...payload,
+          ...(selection !== null && payload.defaultModel === undefined
+            ? { defaultModel: selection.model }
+            : {}),
+          ...(workbookId !== null && payload.workbookId === undefined ? { workbookId } : {}),
+        },
+      };
+    }
+    case "thread.created": {
+      const selection = getLegacyModelSelection(payload.modelSelection);
+      return {
+        ...row,
+        payload: {
+          ...payload,
+          ...(selection !== null && payload.model === undefined ? { model: selection.model } : {}),
+          branch: payload.branch ?? null,
+          worktreePath: payload.worktreePath ?? null,
+        },
+      };
+    }
+    case "thread.meta-updated": {
+      const selection = getLegacyModelSelection(payload.modelSelection);
+      if (selection === null || payload.model !== undefined) {
+        return row;
+      }
+      return {
+        ...row,
+        payload: {
+          ...payload,
+          model: selection.model,
+        },
+      };
+    }
+    case "thread.turn-start-requested": {
+      const selection = getLegacyModelSelection(payload.modelSelection);
+      if (selection === null) {
+        return row;
+      }
+      return {
+        ...row,
+        payload: {
+          ...payload,
+          ...(payload.provider === undefined && selection.provider !== undefined
+            ? { provider: selection.provider }
+            : {}),
+          ...(payload.model === undefined ? { model: selection.model } : {}),
+          ...(payload.modelOptions === undefined && selection.options !== undefined
+            ? { modelOptions: selection.options }
+            : {}),
+        },
+      };
+    }
+    case "thread.archived": {
+      const archivedAt =
+        typeof payload.archivedAt === "string"
+          ? payload.archivedAt
+          : typeof payload.updatedAt === "string"
+            ? payload.updatedAt
+            : null;
+      if (typeof payload.threadId !== "string" || archivedAt === null) {
+        return row;
+      }
+      return {
+        ...row,
+        type: "thread.deleted",
+        payload: {
+          threadId: payload.threadId,
+          deletedAt: archivedAt,
+        },
+      };
+    }
+    default:
+      return row;
+  }
+}
+
+function decodePersistedEventRow(
+  row: Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema>,
+) {
+  return decodeEvent(normalizeLegacyEventRow(row));
+}
 
 function inferActorKind(
   event: Omit<OrchestrationEvent, "sequence">,
@@ -199,7 +337,7 @@ const makeEventStore = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((row) =>
-        decodeEvent(row).pipe(
+        decodePersistedEventRow(row).pipe(
           Effect.mapError(toPersistenceDecodeError("OrchestrationEventStore.append:rowToEvent")),
         ),
       ),
@@ -230,7 +368,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
+              decodePersistedEventRow(row).pipe(
                 Effect.mapError(
                   toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
                 ),

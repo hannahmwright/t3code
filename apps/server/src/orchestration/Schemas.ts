@@ -1,4 +1,7 @@
 import {
+  WorkbookCreatedPayload as ContractsWorkbookCreatedPayloadSchema,
+  WorkbookMetaUpdatedPayload as ContractsWorkbookMetaUpdatedPayloadSchema,
+  WorkbookDeletedPayload as ContractsWorkbookDeletedPayloadSchema,
   ProjectCreatedPayload as ContractsProjectCreatedPayloadSchema,
   ProjectMetaUpdatedPayload as ContractsProjectMetaUpdatedPayloadSchema,
   ProjectDeletedPayload as ContractsProjectDeletedPayloadSchema,
@@ -21,6 +24,10 @@ import {
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
+export const WorkbookCreatedPayload = ContractsWorkbookCreatedPayloadSchema;
+export const WorkbookMetaUpdatedPayload = ContractsWorkbookMetaUpdatedPayloadSchema;
+export const WorkbookDeletedPayload = ContractsWorkbookDeletedPayloadSchema;
+
 export const ProjectCreatedPayload = ContractsProjectCreatedPayloadSchema;
 export const ProjectMetaUpdatedPayload = ContractsProjectMetaUpdatedPayloadSchema;
 export const ProjectDeletedPayload = ContractsProjectDeletedPayloadSchema;

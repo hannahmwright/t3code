@@ -27,6 +27,10 @@ const readModel: OrchestrationReadModel = {
     {
       id: ProjectId.makeUnsafe("project-a"),
       title: "Project A",
+      emoji: null,
+      color: null,
+      groupName: null,
+      groupEmoji: null,
       workspaceRoot: "/tmp/project-a",
       defaultModel: "gpt-5-codex",
       scripts: [],
@@ -37,6 +41,10 @@ const readModel: OrchestrationReadModel = {
     {
       id: ProjectId.makeUnsafe("project-b"),
       title: "Project B",
+      emoji: null,
+      color: null,
+      groupName: null,
+      groupEmoji: null,
       workspaceRoot: "/tmp/project-b",
       defaultModel: "gpt-5-codex",
       scripts: [],

@@ -11,6 +11,9 @@ import {
   requireProjectAbsent,
   requireThread,
   requireThreadAbsent,
+  requireWorkbook,
+  requireWorkbookAbsent,
+  requireWorkbookNameAvailable,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -58,12 +61,112 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   OrchestrationCommandInvariantError
 > {
   switch (command.type) {
+    case "workbook.create": {
+      yield* requireWorkbookAbsent({
+        readModel,
+        command,
+        workbookId: command.workbookId,
+      });
+      yield* requireWorkbookNameAvailable({
+        readModel,
+        command,
+        workbookName: command.name,
+      });
+
+      return {
+        ...withEventBase({
+          aggregateKind: "workbook",
+          aggregateId: command.workbookId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "workbook.created",
+        payload: {
+          workbookId: command.workbookId,
+          name: command.name,
+          emoji: command.emoji ?? null,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "workbook.meta.update": {
+      const workbook = yield* requireWorkbook({
+        readModel,
+        command,
+        workbookId: command.workbookId,
+      });
+      if (command.name !== undefined) {
+        yield* requireWorkbookNameAvailable({
+          readModel,
+          command,
+          workbookName: command.name,
+          excludingWorkbookId: workbook.id,
+        });
+      }
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "workbook",
+          aggregateId: command.workbookId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "workbook.meta-updated",
+        payload: {
+          workbookId: command.workbookId,
+          ...(command.name !== undefined ? { name: command.name } : {}),
+          ...(command.emoji !== undefined ? { emoji: command.emoji } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "workbook.delete": {
+      yield* requireWorkbook({
+        readModel,
+        command,
+        workbookId: command.workbookId,
+      });
+      const stillAssignedProjects = readModel.projects.filter(
+        (project) => project.deletedAt === null && project.workbookId === command.workbookId,
+      );
+      if (stillAssignedProjects.length > 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Workbook '${command.workbookId}' still has assigned projects and cannot be deleted.`,
+        });
+      }
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "workbook",
+          aggregateId: command.workbookId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "workbook.deleted",
+        payload: {
+          workbookId: command.workbookId,
+          deletedAt: occurredAt,
+        },
+      };
+    }
+
     case "project.create": {
       yield* requireProjectAbsent({
         readModel,
         command,
         projectId: command.projectId,
       });
+      if (command.workbookId !== undefined && command.workbookId !== null) {
+        yield* requireWorkbook({
+          readModel,
+          command,
+          workbookId: command.workbookId,
+        });
+      }
 
       return {
         ...withEventBase({
@@ -76,6 +179,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           projectId: command.projectId,
           title: command.title,
+          emoji: command.emoji ?? null,
+          color: command.color ?? null,
+          workbookId: command.workbookId ?? null,
+          groupName: command.groupName ?? null,
+          groupEmoji: command.groupEmoji ?? null,
           workspaceRoot: command.workspaceRoot,
           defaultModel: command.defaultModel ?? null,
           scripts: [],
@@ -91,6 +199,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
+      if (command.workbookId !== undefined && command.workbookId !== null) {
+        yield* requireWorkbook({
+          readModel,
+          command,
+          workbookId: command.workbookId,
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -103,6 +218,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.emoji !== undefined ? { emoji: command.emoji } : {}),
+          ...(command.color !== undefined ? { color: command.color } : {}),
+          ...(command.workbookId !== undefined ? { workbookId: command.workbookId } : {}),
+          ...(command.groupName !== undefined ? { groupName: command.groupName } : {}),
+          ...(command.groupEmoji !== undefined ? { groupEmoji: command.groupEmoji } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
           ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),

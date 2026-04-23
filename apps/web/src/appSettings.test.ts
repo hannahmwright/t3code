@@ -45,6 +45,7 @@ describe("getAppModelOptions", () => {
     const options = getAppModelOptions("codex", ["custom/internal-model"]);
 
     expect(options.map((option) => option.slug)).toEqual([
+      "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
       "gpt-5.3-codex",
@@ -85,7 +86,7 @@ describe("resolveAppModelSelection", () => {
   });
 
   it("falls back to the provider default when no model is selected", () => {
-    expect(resolveAppModelSelection("codex", { codex: [], claudeAgent: [] }, "")).toBe("gpt-5.4");
+    expect(resolveAppModelSelection("codex", { codex: [], claudeAgent: [] }, "")).toBe("gpt-5.5");
   });
 
   it("resolves display names through the shared resolver", () => {
@@ -257,6 +258,7 @@ describe("AppSettingsSchema", () => {
       defaultThreadEnvMode: "local",
       confirmThreadDelete: false,
       enableAssistantStreaming: false,
+      enableTurnCompletionNotifications: true,
       sidebarProjectSortOrder: DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
       sidebarThreadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
       timestampFormat: DEFAULT_TIMESTAMP_FORMAT,

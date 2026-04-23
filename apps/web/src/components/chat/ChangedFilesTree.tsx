@@ -29,7 +29,10 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     [allDirectoriesExpanded, directoryPathsKey],
   );
   const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>(() =>
-    buildDirectoryExpansionState(directoryPathsKey ? directoryPathsKey.split("\u0000") : [], true),
+    buildDirectoryExpansionState(
+      directoryPathsKey ? directoryPathsKey.split("\u0000") : [],
+      allDirectoriesExpanded,
+    ),
   );
   useEffect(() => {
     setExpandedDirectories(allDirectoryExpansionState);
@@ -45,14 +48,14 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
     const leftPadding = 8 + depth * 14;
     if (node.kind === "directory") {
-      const isExpanded = expandedDirectories[node.path] ?? depth === 0;
+      const isExpanded = expandedDirectories[node.path] ?? allDirectoriesExpanded;
       return (
         <div key={`dir:${node.path}`}>
           <button
             type="button"
             className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
             style={{ paddingLeft: `${leftPadding}px` }}
-            onClick={() => toggleDirectory(node.path, depth === 0)}
+            onClick={() => toggleDirectory(node.path, allDirectoriesExpanded)}
           >
             <ChevronRightIcon
               aria-hidden="true"

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 import { Result, Schema } from "effect";
+import { resolvePrimaryEnvironmentWsUrl } from "./primaryEnvironment";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
 
@@ -21,11 +22,16 @@ interface SubscribeOptions {
   readonly replayLatest?: boolean;
 }
 
+interface SubscribeStateOptions {
+  readonly replayCurrent?: boolean;
+}
+
 interface RequestOptions {
   readonly timeoutMs?: number | null;
 }
 
-type TransportState = "connecting" | "open" | "reconnecting" | "closed" | "disposed";
+export type TransportState = "connecting" | "open" | "reconnecting" | "closed" | "disposed";
+type StateListener = (state: TransportState) => void;
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
@@ -55,24 +61,18 @@ export class WsTransport {
   private nextId = 1;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Map<string, Set<(message: WsPush) => void>>();
+  private readonly stateListeners = new Set<StateListener>();
   private readonly latestPushByChannel = new Map<string, WsPush>();
   private readonly outboundQueue: string[] = [];
   private reconnectAttempt = 0;
+  private latestConnectionAttemptId = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
   private state: TransportState = "connecting";
   private readonly url: string;
 
   constructor(url?: string) {
-    const bridgeUrl = window.desktopBridge?.getWsUrl();
-    const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-    this.url =
-      url ??
-      (bridgeUrl && bridgeUrl.length > 0
-        ? bridgeUrl
-        : envUrl && envUrl.length > 0
-          ? envUrl
-          : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
+    this.url = url ?? resolvePrimaryEnvironmentWsUrl();
     this.connect();
   }
 
@@ -150,9 +150,25 @@ export class WsTransport {
     return this.state;
   }
 
+  subscribeState(listener: StateListener, options?: SubscribeStateOptions): () => void {
+    this.stateListeners.add(listener);
+
+    if (options?.replayCurrent) {
+      try {
+        listener(this.state);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
   dispose() {
     this.disposed = true;
-    this.state = "disposed";
+    this.setState("disposed");
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -174,21 +190,43 @@ export class WsTransport {
       return;
     }
 
-    this.state = this.reconnectAttempt > 0 ? "reconnecting" : "connecting";
+    const connectionAttemptId = ++this.latestConnectionAttemptId;
+    this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
     const ws = new WebSocket(this.url);
 
     ws.addEventListener("open", () => {
+      if (connectionAttemptId !== this.latestConnectionAttemptId || this.disposed) {
+        try {
+          ws.close();
+        } catch {
+          // Swallow close errors for stale sockets.
+        }
+        return;
+      }
+      if (this.ws && this.ws !== ws) {
+        try {
+          this.ws.close();
+        } catch {
+          // Swallow close errors when replacing a stale socket.
+        }
+      }
       this.ws = ws;
-      this.state = "open";
+      this.setState("open");
       this.reconnectAttempt = 0;
       this.flushQueue();
     });
 
     ws.addEventListener("message", (event) => {
+      if (connectionAttemptId !== this.latestConnectionAttemptId || this.ws !== ws) {
+        return;
+      }
       this.handleMessage(event.data);
     });
 
     ws.addEventListener("close", () => {
+      if (connectionAttemptId !== this.latestConnectionAttemptId) {
+        return;
+      }
       if (this.ws === ws) {
         this.ws = null;
         this.outboundQueue.length = 0;
@@ -201,14 +239,17 @@ export class WsTransport {
         }
       }
       if (this.disposed) {
-        this.state = "disposed";
+        this.setState("disposed");
         return;
       }
-      this.state = "closed";
+      this.setState("closed");
       this.scheduleReconnect();
     });
 
     ws.addEventListener("error", (event) => {
+      if (connectionAttemptId !== this.latestConnectionAttemptId) {
+        return;
+      }
       // Log WebSocket errors for debugging (close event will follow)
       console.warn("WebSocket connection error", { type: event.type, url: this.url });
     });
@@ -305,5 +346,19 @@ export class WsTransport {
       this.reconnectTimer = null;
       this.connect();
     }, delay);
+  }
+
+  private setState(nextState: TransportState) {
+    if (this.state === nextState) {
+      return;
+    }
+    this.state = nextState;
+    for (const listener of this.stateListeners) {
+      try {
+        listener(nextState);
+      } catch {
+        // Swallow listener errors
+      }
+    }
   }
 }

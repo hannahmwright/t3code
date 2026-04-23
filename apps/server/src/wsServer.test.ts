@@ -12,6 +12,9 @@ import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./confi
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 
 import {
+  type AuthBootstrapResult,
+  type AuthPairingCredentialResult,
+  type AuthSessionState,
   DEFAULT_TERMINAL_ID,
   EDITORS,
   EventId,
@@ -53,6 +56,10 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import {
+  PushNotificationService,
+  type PushNotificationServiceShape,
+} from "./notifications/Services/PushNotificationService.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -280,10 +287,16 @@ function asWebSocketResponse(message: unknown): WebSocketResponse | null {
   return message as WebSocketResponse;
 }
 
-function connectWsOnce(port: number, token?: string): Promise<WebSocket> {
+function connectWsOnce(
+  port: number,
+  token?: string,
+  options?: { cookie?: string },
+): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const query = token ? `?token=${encodeURIComponent(token)}` : "";
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/${query}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/${query}`, {
+      headers: options?.cookie ? { Cookie: options.cookie } : undefined,
+    });
     const channels: SocketChannels = {
       push: { queue: [], waiters: [] },
       response: { queue: [], waiters: [] },
@@ -307,12 +320,17 @@ function connectWsOnce(port: number, token?: string): Promise<WebSocket> {
   });
 }
 
-async function connectWs(port: number, token?: string, attempts = 5): Promise<WebSocket> {
+async function connectWs(
+  port: number,
+  token?: string,
+  attempts = 5,
+  options?: { cookie?: string },
+): Promise<WebSocket> {
   let lastError: unknown = new Error("WebSocket connection failed");
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      return await connectWsOnce(port, token);
+      return await connectWsOnce(port, token, options);
     } catch (error) {
       lastError = error;
       if (attempt < attempts - 1) {
@@ -328,10 +346,61 @@ async function connectWs(port: number, token?: string, attempts = 5): Promise<We
 async function connectAndAwaitWelcome(
   port: number,
   token?: string,
+  options?: { cookie?: string },
 ): Promise<[WebSocket, WsPushMessage<typeof WS_CHANNELS.serverWelcome>]> {
-  const ws = await connectWs(port, token);
+  const ws = await connectWs(port, token, 5, options);
   const welcome = await waitForPush(ws, WS_CHANNELS.serverWelcome);
   return [ws, welcome];
+}
+
+async function httpJson<T>(
+  port: number,
+  path: string,
+  options?: {
+    method?: "GET" | "POST";
+    body?: unknown;
+    cookie?: string;
+  },
+): Promise<{ status: number; json: T; setCookie: string | null }> {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: options?.method ?? "GET",
+    headers: {
+      ...(options?.body !== undefined ? { "content-type": "application/json" } : {}),
+      ...(options?.cookie ? { cookie: options.cookie } : {}),
+    },
+    body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+  });
+  const text = await response.text();
+  let json: T;
+  try {
+    json = JSON.parse(text) as T;
+  } catch (error) {
+    throw new Error(
+      `Expected JSON response from ${path} but got status ${response.status}: ${text}`,
+      { cause: error },
+    );
+  }
+  return {
+    status: response.status,
+    json,
+    setCookie: response.headers.get("set-cookie"),
+  };
+}
+
+async function httpResponse(
+  port: number,
+  path: string,
+  options?: {
+    method?: "GET" | "POST" | "OPTIONS";
+    headers?: Record<string, string>;
+    body?: string;
+  },
+): Promise<Response> {
+  return fetch(`http://127.0.0.1:${port}${path}`, {
+    method: options?.method ?? "GET",
+    headers: options?.headers,
+    body: options?.body,
+  });
 }
 
 async function sendRequest(
@@ -461,6 +530,25 @@ function deriveServerPathsSync(baseDir: string, devUrl: URL | undefined) {
   );
 }
 
+function expectedServerDiagnostics(
+  baseDir: string,
+  options?: {
+    authEnabled?: boolean;
+    staticDir?: string;
+  },
+) {
+  const derivedPaths = deriveServerPathsSync(baseDir, undefined);
+  return {
+    mode: "web",
+    port: 0,
+    host: null,
+    baseDir,
+    stateDir: derivedPaths.stateDir,
+    staticDir: options?.staticDir ?? null,
+    authEnabled: options?.authEnabled ?? false,
+  };
+}
+
 describe("WebSocket Server", () => {
   let server: Http.Server | null = null;
   let serverScope: Scope.Closeable | null = null;
@@ -492,6 +580,7 @@ describe("WebSocket Server", () => {
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
+      pushNotificationService?: PushNotificationServiceShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -531,6 +620,9 @@ describe("WebSocket Server", () => {
         : Layer.empty,
       options.terminalManager
         ? Layer.succeed(TerminalManager, options.terminalManager)
+        : Layer.empty,
+      options.pushNotificationService
+        ? Layer.succeed(PushNotificationService, options.pushNotificationService)
         : Layer.empty,
     );
 
@@ -846,8 +938,70 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      diagnostics: expectedServerDiagnostics(baseDir),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+  });
+
+  it("routes browser push notification requests through the push notification service", async () => {
+    const pushNotificationService: PushNotificationServiceShape = {
+      getConfig: () =>
+        Effect.succeed({
+          supported: true,
+          publicKey: "AQIDBA",
+          reason: null,
+        }),
+      upsertPushSubscription: vi.fn(() => Effect.void),
+      deletePushSubscription: vi.fn(() => Effect.void),
+      notifyTurnCompleted: vi.fn(() => Effect.void),
+    };
+
+    server = await createTestServer({ cwd: "/my/workspace", pushNotificationService });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const configResponse = await sendRequest(ws, WS_METHODS.notificationsGetConfig);
+    expect(configResponse.error).toBeUndefined();
+    expect(configResponse.result).toEqual({
+      supported: true,
+      publicKey: "AQIDBA",
+      reason: null,
+    });
+
+    const upsertResponse = await sendRequest(ws, WS_METHODS.notificationsUpsertPushSubscription, {
+      subscription: {
+        endpoint: "https://push.example/subscription-1",
+        expirationTime: null,
+        keys: {
+          auth: "auth-token",
+          p256dh: "p256dh-token",
+        },
+      },
+      userAgent: "Mobile Safari",
+    });
+    expect(upsertResponse.error).toBeUndefined();
+    expect(pushNotificationService.upsertPushSubscription).toHaveBeenCalledWith({
+      subscription: {
+        endpoint: "https://push.example/subscription-1",
+        expirationTime: null,
+        keys: {
+          auth: "auth-token",
+          p256dh: "p256dh-token",
+        },
+      },
+      userAgent: "Mobile Safari",
+    });
+
+    const deleteResponse = await sendRequest(ws, WS_METHODS.notificationsDeletePushSubscription, {
+      endpoint: "https://push.example/subscription-1",
+    });
+    expect(deleteResponse.error).toBeUndefined();
+    expect(pushNotificationService.deletePushSubscription).toHaveBeenCalledWith({
+      endpoint: "https://push.example/subscription-1",
+    });
   });
 
   it("bootstraps default keybindings file when missing", async () => {
@@ -871,6 +1025,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      diagnostics: expectedServerDiagnostics(baseDir),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
@@ -907,6 +1062,7 @@ describe("WebSocket Server", () => {
       ],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      diagnostics: expectedServerDiagnostics(baseDir),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
@@ -942,6 +1098,7 @@ describe("WebSocket Server", () => {
       issues: Array<{ kind: string; index?: number; message: string }>;
       providers: ReadonlyArray<ServerProviderStatus>;
       availableEditors: unknown;
+      diagnostics: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
     expect(result.keybindingsConfigPath).toBe(keybindingsPath);
@@ -961,6 +1118,7 @@ describe("WebSocket Server", () => {
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
     expect(result.providers).toEqual(defaultProviderStatuses);
+    expect(result.diagnostics).toEqual(expectedServerDiagnostics(baseDir));
     expectAvailableEditors(result.availableEditors);
   });
 
@@ -1057,6 +1215,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      diagnostics: expectedServerDiagnostics(baseDir),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -1105,6 +1264,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      diagnostics: expectedServerDiagnostics(baseDir),
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,
@@ -1910,5 +2070,121 @@ describe("WebSocket Server", () => {
 
     const [authorizedWs] = await connectAndAwaitWelcome(port, "secret-token");
     connections.push(authorizedWs);
+  });
+
+  it("bootstraps an owner session cookie and accepts websocket auth via cookie", async () => {
+    server = await createTestServer({ cwd: "/test", authToken: "secret-token" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const sessionBefore = await httpJson<AuthSessionState>(port, "/api/auth/session");
+    expect(sessionBefore.status).toBe(200);
+    expect(sessionBefore.json).toEqual({
+      authenticated: false,
+      auth: { enabled: true },
+    });
+
+    const bootstrap = await httpJson<AuthBootstrapResult>(port, "/api/auth/bootstrap", {
+      method: "POST",
+      body: { credential: "secret-token" },
+    });
+    expect(bootstrap.status).toBe(200);
+    expect(bootstrap.json.role).toBe("owner");
+    expect(bootstrap.setCookie).toContain("t3code_session=");
+
+    const sessionCookie = bootstrap.setCookie?.split(";")[0] ?? null;
+    expect(sessionCookie).not.toBeNull();
+
+    const [authorizedWs] = await connectAndAwaitWelcome(port, undefined, {
+      cookie: sessionCookie!,
+    });
+    connections.push(authorizedWs);
+  });
+
+  it("creates one-time pairing credentials from an owner session", async () => {
+    server = await createTestServer({ cwd: "/test", authToken: "secret-token" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const bootstrap = await httpJson<AuthBootstrapResult>(port, "/api/auth/bootstrap", {
+      method: "POST",
+      body: { credential: "secret-token" },
+    });
+    const ownerCookie = bootstrap.setCookie?.split(";")[0] ?? null;
+    expect(ownerCookie).not.toBeNull();
+
+    const pairing = await httpJson<AuthPairingCredentialResult>(port, "/api/auth/pairing-token", {
+      method: "POST",
+      cookie: ownerCookie!,
+      body: {},
+    });
+    expect(pairing.status).toBe(200);
+    expect(pairing.json.role).toBe("client");
+    expect(pairing.json.credential.length).toBeGreaterThan(10);
+
+    const clientBootstrap = await httpJson<AuthBootstrapResult>(port, "/api/auth/bootstrap", {
+      method: "POST",
+      body: { credential: pairing.json.credential },
+    });
+    expect(clientBootstrap.status).toBe(200);
+    expect(clientBootstrap.json.role).toBe("client");
+    expect(clientBootstrap.setCookie).toContain("t3code_session=");
+
+    const clientCookie = clientBootstrap.setCookie?.split(";")[0] ?? null;
+    const [clientWs] = await connectAndAwaitWelcome(port, undefined, { cookie: clientCookie! });
+    connections.push(clientWs);
+
+    const reusedPairing = await httpJson<{ error: string }>(port, "/api/auth/bootstrap", {
+      method: "POST",
+      body: { credential: pairing.json.credential },
+    });
+    expect(reusedPairing.status).toBe(401);
+    expect(reusedPairing.json.error).toContain("invalid or has expired");
+  });
+
+  it("allows trusted desktop origins to call auth routes with CORS", async () => {
+    server = await createTestServer({ cwd: "/test", authToken: "secret-token" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const sessionResponse = await httpResponse(port, "/api/auth/session", {
+      headers: {
+        origin: "t3://app",
+      },
+    });
+    expect(sessionResponse.status).toBe(200);
+    expect(sessionResponse.headers.get("access-control-allow-origin")).toBe("t3://app");
+    expect(sessionResponse.headers.get("access-control-allow-credentials")).toBe("true");
+
+    const preflightResponse = await httpResponse(port, "/api/auth/bootstrap", {
+      method: "OPTIONS",
+      headers: {
+        origin: "t3://app",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type",
+      },
+    });
+    expect(preflightResponse.status).toBe(204);
+    expect(preflightResponse.headers.get("access-control-allow-origin")).toBe("t3://app");
+    expect(preflightResponse.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
+  it("issues secure cross-site cookies for desktop bootstrap against secure origins", async () => {
+    server = await createTestServer({ cwd: "/test", authToken: "secret-token" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const bootstrap = await httpResponse(port, "/api/auth/bootstrap", {
+      method: "POST",
+      headers: {
+        origin: "t3://app",
+        "content-type": "application/json",
+        "x-forwarded-proto": "https",
+      },
+      body: JSON.stringify({ credential: "secret-token" }),
+    });
+    expect(bootstrap.status).toBe(200);
+    expect(bootstrap.headers.get("set-cookie")).toContain("SameSite=None");
+    expect(bootstrap.headers.get("set-cookie")).toContain("Secure");
   });
 });

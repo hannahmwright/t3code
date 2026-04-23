@@ -7,8 +7,9 @@
  * @module ServerConfig
  */
 import { Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
+import { DEFAULT_LOCAL_SERVER_PORT } from "@t3tools/shared/serverDefaults";
 
-export const DEFAULT_PORT = 3773;
+export const DEFAULT_PORT = DEFAULT_LOCAL_SERVER_PORT;
 
 export type RuntimeMode = "web" | "desktop";
 

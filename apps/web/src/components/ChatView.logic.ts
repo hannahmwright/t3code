@@ -75,6 +75,11 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
 }
 
 export type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
+export type ComposerPrimaryActionState =
+  | "pending-user-input"
+  | "interrupt"
+  | "plan-follow-up"
+  | "send";
 
 export interface PullRequestDialogState {
   initialReference: string | null;
@@ -159,4 +164,42 @@ export function buildExpiredTerminalContextToastCopy(
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
   };
+}
+
+export function shouldResetSendPhase(input: {
+  sendPhase: SendPhase;
+  isTurnRunning: boolean;
+  latestTurnSettled: boolean;
+  hasPendingApproval: boolean;
+  hasPendingUserInput: boolean;
+  hasThreadError: boolean;
+}): boolean {
+  if (input.sendPhase === "idle") {
+    return false;
+  }
+
+  return (
+    input.isTurnRunning ||
+    input.latestTurnSettled ||
+    input.hasPendingApproval ||
+    input.hasPendingUserInput ||
+    input.hasThreadError
+  );
+}
+
+export function deriveComposerPrimaryActionState(input: {
+  hasPendingUserInput: boolean;
+  canInterrupt: boolean;
+  showPlanFollowUpPrompt: boolean;
+}): ComposerPrimaryActionState {
+  if (input.hasPendingUserInput) {
+    return "pending-user-input";
+  }
+  if (input.canInterrupt) {
+    return "interrupt";
+  }
+  if (input.showPlanFollowUpPrompt) {
+    return "plan-follow-up";
+  }
+  return "send";
 }

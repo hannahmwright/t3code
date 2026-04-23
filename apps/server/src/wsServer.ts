@@ -7,10 +7,11 @@
  * @module Server
  */
 import http from "node:http";
-import type { Duplex } from "node:stream";
-
+import tls from "node:tls";
 import Mime from "@effect/platform-node/Mime";
 import {
+  AuthBootstrapInput,
+  AuthCreatePairingCredentialInput,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
@@ -43,7 +44,7 @@ import {
   Stream,
   Struct,
 } from "effect";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocketServer, type VerifyClientCallbackAsync, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
@@ -78,6 +79,8 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { PushNotificationService } from "./notifications/Services/PushNotificationService.ts";
+import { ServerAuth } from "./auth/ServerAuth.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -109,17 +112,6 @@ const isServerNotRunningError = (error: Error): boolean => {
     maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
   );
 };
-
-function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
-  socket.end(
-    `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
-      "Connection: close\r\n" +
-      "Content-Type: text/plain\r\n" +
-      `Content-Length: ${Buffer.byteLength(message)}\r\n` +
-      "\r\n" +
-      message,
-  );
-}
 
 function websocketRawToString(raw: unknown): string | null {
   if (typeof raw === "string") {
@@ -201,6 +193,91 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
 
 const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
 const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
+const decodeAuthBootstrapInput = Schema.decodeUnknownSync(AuthBootstrapInput);
+const decodeAuthCreatePairingCredentialInput = Schema.decodeUnknownSync(
+  AuthCreatePairingCredentialInput,
+);
+
+function readForwardedProtoHeader(header: string | string[] | undefined): string | null {
+  if (typeof header === "string") {
+    return header.split(",")[0]?.trim().toLowerCase() ?? null;
+  }
+  if (Array.isArray(header) && header.length > 0) {
+    return header[0]?.split(",")[0]?.trim().toLowerCase() ?? null;
+  }
+  return null;
+}
+
+function isSecureRequest(req: http.IncomingMessage): boolean {
+  return (
+    (req.socket instanceof tls.TLSSocket && req.socket.encrypted) ||
+    readForwardedProtoHeader(req.headers["x-forwarded-proto"]) === "https"
+  );
+}
+
+function readRequestOrigin(header: string | string[] | undefined): string | null {
+  if (typeof header === "string" && header.trim().length > 0) {
+    return header.trim();
+  }
+  if (Array.isArray(header)) {
+    const first = header.find((value) => value.trim().length > 0);
+    return first?.trim() ?? null;
+  }
+  return null;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function isTrustedAuthOrigin(origin: string, req: http.IncomingMessage): boolean {
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  if (originUrl.protocol === "t3:") {
+    return true;
+  }
+
+  if (originUrl.protocol !== "http:" && originUrl.protocol !== "https:") {
+    return false;
+  }
+
+  if (isLoopbackHostname(originUrl.hostname)) {
+    return true;
+  }
+
+  const forwardedHost = req.headers["x-forwarded-host"];
+  const requestHost =
+    (typeof forwardedHost === "string" && forwardedHost.trim().length > 0
+      ? forwardedHost
+      : Array.isArray(forwardedHost)
+        ? forwardedHost[0]
+        : undefined) ?? req.headers.host;
+
+  return typeof requestHost === "string" && requestHost.trim().length > 0
+    ? originUrl.host === requestHost.trim()
+    : false;
+}
+
+function buildAuthCorsHeaders(req: http.IncomingMessage): Record<string, string> {
+  const origin = readRequestOrigin(req.headers.origin);
+  if (!origin || !isTrustedAuthOrigin(origin, req)) {
+    return {};
+  }
+
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Headers": "content-type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    Vary: "Origin",
+  };
+}
 
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
@@ -217,7 +294,9 @@ export type ServerRuntimeServices =
   | TerminalManager
   | Keybindings
   | Open
-  | AnalyticsService;
+  | AnalyticsService
+  | PushNotificationService
+  | ServerAuth;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -257,6 +336,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const serverAuth = yield* ServerAuth;
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -424,6 +504,212 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     void Effect.runPromise(
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+        const authCorsHeaders = buildAuthCorsHeaders(req);
+        const readJsonBody = () =>
+          Effect.tryPromise({
+            try: () =>
+              new Promise<string>((resolve) => {
+                const chunks: Buffer[] = [];
+                req.on("data", (chunk) => {
+                  chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                });
+                req.on("end", () => {
+                  resolve(Buffer.concat(chunks).toString("utf8"));
+                });
+                req.on("error", () => {
+                  resolve("");
+                });
+              }),
+            catch: () =>
+              new RouteRequestError({
+                message: "Failed to read request body.",
+              }),
+          });
+        const decodeJsonPayload = <T>(options: {
+          readonly bodyText: string;
+          readonly decode: (value: unknown) => T;
+        }) =>
+          Effect.try({
+            try: () => options.decode(JSON.parse(options.bodyText || "{}")),
+            catch: (error) =>
+              error instanceof Error
+                ? error.message
+                : `Failed to parse request body: ${String(error)}`,
+          });
+
+        if (url.pathname.startsWith("/api/auth/") && req.method === "OPTIONS") {
+          if (Object.keys(authCorsHeaders).length === 0) {
+            respond(403, { "Content-Type": "text/plain" }, "Forbidden");
+            return;
+          }
+          respond(204, authCorsHeaders);
+          return;
+        }
+
+        if (url.pathname === "/api/auth/session" && req.method === "GET") {
+          const sessionState = yield* serverAuth.getSessionState(req.headers);
+          respond(
+            200,
+            {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store",
+              ...authCorsHeaders,
+            },
+            JSON.stringify(sessionState),
+          );
+          return;
+        }
+
+        if (url.pathname === "/api/auth/bootstrap" && req.method === "POST") {
+          const bodyText = yield* readJsonBody();
+          const parsedBodyExit = yield* Effect.exit(
+            decodeJsonPayload({
+              bodyText,
+              decode: decodeAuthBootstrapInput,
+            }),
+          );
+          if (Exit.isFailure(parsedBodyExit)) {
+            respond(
+              400,
+              {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                ...authCorsHeaders,
+              },
+              JSON.stringify({
+                error: `Invalid bootstrap payload: ${Cause.pretty(parsedBodyExit.cause)}`,
+              }),
+            );
+            return;
+          }
+          const parsedBody = parsedBodyExit.value;
+          const bootstrapResult = yield* serverAuth
+            .bootstrapWithCredential(parsedBody.credential)
+            .pipe(
+              Effect.catchTag("ServerAuthError", (error) =>
+                Effect.succeed({
+                  error,
+                } as const),
+              ),
+            );
+          if ("error" in bootstrapResult) {
+            respond(
+              bootstrapResult.error.status,
+              {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                ...authCorsHeaders,
+              },
+              JSON.stringify({ error: bootstrapResult.error.message }),
+            );
+            return;
+          }
+
+          const secure = isSecureRequest(req);
+          const cookieParts = [
+            `${serverAuth.sessionCookieName}=${encodeURIComponent(bootstrapResult.sessionToken)}`,
+            "Path=/",
+            "HttpOnly",
+            secure ? "SameSite=None" : "SameSite=Lax",
+            `Max-Age=${Math.max(
+              0,
+              Math.floor((Date.parse(bootstrapResult.response.expiresAt) - Date.now()) / 1_000),
+            )}`,
+          ];
+          if (secure) {
+            cookieParts.push("Secure");
+          }
+          respond(
+            200,
+            {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store",
+              "Set-Cookie": cookieParts.join("; "),
+              ...authCorsHeaders,
+            },
+            JSON.stringify(bootstrapResult.response),
+          );
+          return;
+        }
+
+        if (url.pathname === "/api/auth/pairing-token" && req.method === "POST") {
+          const ownerSession = yield* serverAuth
+            .requireOwnerSession(req.headers)
+            .pipe(
+              Effect.catchTag("ServerAuthError", (error) => Effect.succeed({ error } as const)),
+            );
+          if ("error" in ownerSession) {
+            respond(
+              ownerSession.error.status,
+              {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                ...authCorsHeaders,
+              },
+              JSON.stringify({ error: ownerSession.error.message }),
+            );
+            return;
+          }
+
+          const bodyText = yield* readJsonBody();
+          const parsedBodyExit = yield* Effect.exit(
+            Effect.try({
+              try: () =>
+                decodeAuthCreatePairingCredentialInput(
+                  bodyText.trim().length === 0 ? {} : JSON.parse(bodyText),
+                ),
+              catch: (error) =>
+                error instanceof Error
+                  ? error.message
+                  : `Failed to parse request body: ${String(error)}`,
+            }),
+          );
+          if (Exit.isFailure(parsedBodyExit)) {
+            respond(
+              400,
+              {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                ...authCorsHeaders,
+              },
+              JSON.stringify({
+                error: `Invalid pairing payload: ${Cause.pretty(parsedBodyExit.cause)}`,
+              }),
+            );
+            return;
+          }
+          const parsedBody = parsedBodyExit.value;
+
+          const pairingCredential = yield* serverAuth
+            .issuePairingCredential(parsedBody.label ?? null)
+            .pipe(
+              Effect.catchTag("ServerAuthError", (error) => Effect.succeed({ error } as const)),
+            );
+          if ("error" in pairingCredential) {
+            respond(
+              pairingCredential.error.status,
+              {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                ...authCorsHeaders,
+              },
+              JSON.stringify({ error: pairingCredential.error.message }),
+            );
+            return;
+          }
+
+          respond(
+            200,
+            {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store",
+              ...authCorsHeaders,
+            },
+            JSON.stringify(pairingCredential),
+          );
+          return;
+        }
+
         if (tryHandleProjectFaviconRequest(url, res)) {
           return;
         }
@@ -574,8 +860,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
   });
 
-  // WebSocket server — upgrades from the HTTP server
-  const wss = new WebSocketServer({ noServer: true });
+  // Let `ws` own the HTTP upgrade path directly. This avoids handshake drift
+  // between the runtime server and the websocket server under Node.
+  const wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: authToken
+      ? (((info, done) => {
+          void runPromise(serverAuth.validateWebSocketRequest(info.req))
+            .then((allowed) => {
+              done(allowed, allowed ? 200 : 401, allowed ? undefined : "Unauthorized");
+            })
+            .catch(() => {
+              done(false, 401, "Unauthorized");
+            });
+        }) satisfies VerifyClientCallbackAsync)
+      : undefined,
+  });
 
   const closeWebSocketServer = Effect.callback<void, ServerLifecycleError>((resume) => {
     wss.close((error) => {
@@ -603,12 +903,30 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
   const { openInEditor } = yield* Open;
+  const pushNotificationService = yield* PushNotificationService;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
+    pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event).pipe(
+      Effect.tap(() => {
+        if (event.type !== "thread.turn-diff-completed") {
+          return Effect.void;
+        }
+
+        return pushNotificationService.notifyTurnCompleted(event).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to send turn completion web push", {
+              threadId: event.payload.threadId,
+              cause,
+            }),
+          ),
+          Effect.forkIn(subscriptionsScope),
+          Effect.asVoid,
+        );
+      }),
+    ),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
@@ -881,12 +1199,34 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          diagnostics: {
+            mode: serverConfig.mode,
+            port,
+            host: host ?? null,
+            baseDir: serverConfig.baseDir,
+            stateDir: serverConfig.stateDir,
+            staticDir: staticDir ?? null,
+            authEnabled: authToken !== undefined,
+          },
         };
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.notificationsGetConfig:
+        return yield* pushNotificationService.getConfig();
+
+      case WS_METHODS.notificationsUpsertPushSubscription: {
+        const body = stripRequestTag(request.body);
+        return yield* pushNotificationService.upsertPushSubscription(body);
+      }
+
+      case WS_METHODS.notificationsDeletePushSubscription: {
+        const body = stripRequestTag(request.body);
+        return yield* pushNotificationService.deletePushSubscription(body);
       }
 
       default: {
@@ -932,30 +1272,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     return yield* sendWsResponse({
       id: request.success.id,
       result: result.value,
-    });
-  });
-
-  httpServer.on("upgrade", (request, socket, head) => {
-    socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
-
-    if (authToken) {
-      let providedToken: string | null = null;
-      try {
-        const url = new URL(request.url ?? "/", `http://localhost:${port}`);
-        providedToken = url.searchParams.get("token");
-      } catch {
-        rejectUpgrade(socket, 400, "Invalid WebSocket URL");
-        return;
-      }
-
-      if (providedToken !== authToken) {
-        rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
-        return;
-      }
-    }
-
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
     });
   });
 

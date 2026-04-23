@@ -20,9 +20,24 @@ const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> =
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
 };
 
+const CLAUDE_OPUS_4_7_MODEL = "claude-opus-4-7";
 const CLAUDE_OPUS_4_6_MODEL = "claude-opus-4-6";
 const CLAUDE_SONNET_4_6_MODEL = "claude-sonnet-4-6";
 const CLAUDE_HAIKU_4_5_MODEL = "claude-haiku-4-5";
+const CLAUDE_ONE_MILLION_CONTEXT_WINDOW = 1_000_000;
+const CLAUDE_TWO_HUNDRED_THOUSAND_CONTEXT_WINDOW = 200_000;
+const CLAUDE_FAST_MODE_MODELS = new Set([CLAUDE_OPUS_4_7_MODEL, CLAUDE_OPUS_4_6_MODEL]);
+const CLAUDE_MAX_EFFORT_MODELS = CLAUDE_FAST_MODE_MODELS;
+const CLAUDE_ADAPTIVE_REASONING_MODELS = new Set([
+  ...CLAUDE_MAX_EFFORT_MODELS,
+  CLAUDE_SONNET_4_6_MODEL,
+]);
+const CLAUDE_ONE_MILLION_CONTEXT_MODELS = new Set([
+  CLAUDE_OPUS_4_7_MODEL,
+  CLAUDE_OPUS_4_6_MODEL,
+  CLAUDE_SONNET_4_6_MODEL,
+]);
+const CLAUDE_TWO_HUNDRED_THOUSAND_CONTEXT_MODELS = new Set([CLAUDE_HAIKU_4_5_MODEL]);
 
 export interface SelectableModelOption {
   slug: string;
@@ -38,16 +53,18 @@ export function getDefaultModel(provider: ProviderKind = "codex"): ModelSlug {
 }
 
 export function supportsClaudeFastMode(model: string | null | undefined): boolean {
-  return normalizeModelSlug(model, "claudeAgent") === CLAUDE_OPUS_4_6_MODEL;
+  const normalized = normalizeModelSlug(model, "claudeAgent");
+  return normalized !== null && CLAUDE_FAST_MODE_MODELS.has(normalized);
 }
 
 export function supportsClaudeAdaptiveReasoning(model: string | null | undefined): boolean {
   const normalized = normalizeModelSlug(model, "claudeAgent");
-  return normalized === CLAUDE_OPUS_4_6_MODEL || normalized === CLAUDE_SONNET_4_6_MODEL;
+  return normalized !== null && CLAUDE_ADAPTIVE_REASONING_MODELS.has(normalized);
 }
 
 export function supportsClaudeMaxEffort(model: string | null | undefined): boolean {
-  return normalizeModelSlug(model, "claudeAgent") === CLAUDE_OPUS_4_6_MODEL;
+  const normalized = normalizeModelSlug(model, "claudeAgent");
+  return normalized !== null && CLAUDE_MAX_EFFORT_MODELS.has(normalized);
 }
 
 export function supportsClaudeUltrathinkKeyword(model: string | null | undefined): boolean {
@@ -56,6 +73,20 @@ export function supportsClaudeUltrathinkKeyword(model: string | null | undefined
 
 export function supportsClaudeThinkingToggle(model: string | null | undefined): boolean {
   return normalizeModelSlug(model, "claudeAgent") === CLAUDE_HAIKU_4_5_MODEL;
+}
+
+export function getKnownClaudeContextWindow(model: string | null | undefined): number | null {
+  const normalized = normalizeModelSlug(model, "claudeAgent");
+  if (!normalized) {
+    return null;
+  }
+  if (CLAUDE_ONE_MILLION_CONTEXT_MODELS.has(normalized)) {
+    return CLAUDE_ONE_MILLION_CONTEXT_WINDOW;
+  }
+  if (CLAUDE_TWO_HUNDRED_THOUSAND_CONTEXT_MODELS.has(normalized)) {
+    return CLAUDE_TWO_HUNDRED_THOUSAND_CONTEXT_WINDOW;
+  }
+  return null;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {

@@ -27,6 +27,13 @@ import Migration0012 from "./Migrations/012_ProjectionThreadsInteractionMode.ts"
 import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
 import Migration0014 from "./Migrations/014_ProjectionThreadProposedPlanImplementation.ts";
 import Migration0015 from "./Migrations/015_ProjectionTurnsSourceProposedPlan.ts";
+import Migration0016 from "./Migrations/016_BrowserPushSubscriptions.ts";
+import Migration0024 from "./Migrations/024_BrowserPushSubscriptionsCompatibility.ts";
+import Migration0025 from "./Migrations/025_ProjectionModelColumnsCompatibility.ts";
+import Migration0026 from "./Migrations/026_ProjectDisplayMetadata.ts";
+import Migration0027 from "./Migrations/027_ProjectAccentColor.ts";
+import Migration0028 from "./Migrations/028_AuthSessions.ts";
+import Migration0029 from "./Migrations/029_Workbooks.ts";
 import { Effect } from "effect";
 
 /**
@@ -55,6 +62,13 @@ const loader = Migrator.fromRecord({
   "13_ProjectionThreadProposedPlans": Migration0013,
   "14_ProjectionThreadProposedPlanImplementation": Migration0014,
   "15_ProjectionTurnsSourceProposedPlan": Migration0015,
+  "16_BrowserPushSubscriptions": Migration0016,
+  "24_BrowserPushSubscriptionsCompatibility": Migration0024,
+  "25_ProjectionModelColumnsCompatibility": Migration0025,
+  "26_ProjectDisplayMetadata": Migration0026,
+  "27_ProjectAccentColor": Migration0027,
+  "28_AuthSessions": Migration0028,
+  "29_Workbooks": Migration0029,
 });
 
 /**

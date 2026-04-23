@@ -30,6 +30,10 @@ function makeSnapshot(input: {
       {
         id: input.projectId,
         title: "Project",
+        emoji: null,
+        color: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: input.workspaceRoot,
         defaultModel: null,
         scripts: [],

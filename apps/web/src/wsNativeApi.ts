@@ -11,12 +11,14 @@ import {
 } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
-import { WsTransport } from "./wsTransport";
+import { type TransportState, WsTransport } from "./wsTransport";
 
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
+const SNAPSHOT_REQUEST_TIMEOUT_MS = 8_000;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => void>();
+const transportStateListeners = new Set<(state: TransportState) => void>();
 
 /**
  * Subscribe to the server welcome message. If a welcome was already received
@@ -64,6 +66,23 @@ export function onServerConfigUpdated(
   };
 }
 
+export function onTransportStateChange(listener: (state: TransportState) => void): () => void {
+  transportStateListeners.add(listener);
+
+  const currentState = instance?.transport.getState() ?? null;
+  if (currentState) {
+    try {
+      listener(currentState);
+    } catch {
+      // Swallow listener errors
+    }
+  }
+
+  return () => {
+    transportStateListeners.delete(listener);
+  };
+}
+
 export function createWsNativeApi(): NativeApi {
   if (instance) return instance.api;
 
@@ -99,6 +118,18 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
+  transport.subscribeState(
+    (state) => {
+      for (const listener of transportStateListeners) {
+        try {
+          listener(state);
+        } catch {
+          // Swallow listener errors
+        }
+      }
+    },
+    { replayCurrent: true },
+  );
 
   const api: NativeApi = {
     dialogs: {
@@ -180,8 +211,18 @@ export function createWsNativeApi(): NativeApi {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
+    notifications: {
+      getConfig: () => transport.request(WS_METHODS.notificationsGetConfig),
+      upsertPushSubscription: (input) =>
+        transport.request(WS_METHODS.notificationsUpsertPushSubscription, input),
+      deletePushSubscription: (input) =>
+        transport.request(WS_METHODS.notificationsDeletePushSubscription, input),
+    },
     orchestration: {
-      getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
+      getSnapshot: () =>
+        transport.request(ORCHESTRATION_WS_METHODS.getSnapshot, undefined, {
+          timeoutMs: SNAPSHOT_REQUEST_TIMEOUT_MS,
+        }),
       dispatchCommand: (command) =>
         transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
       getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),

@@ -71,6 +71,30 @@ function sameId(left: string | null | undefined, right: string | null | undefine
   return left === right;
 }
 
+function deriveSessionCanInterrupt(input: {
+  status: "idle" | "starting" | "running" | "ready" | "interrupted" | "stopped" | "error";
+  activeTurnId: TurnId | null;
+  latestTurnCompletedAt: string | null | undefined;
+  previousCanInterrupt: boolean;
+}): boolean {
+  const latestTurnSettled =
+    input.latestTurnCompletedAt !== null && input.latestTurnCompletedAt !== undefined;
+
+  switch (input.status) {
+    case "running":
+      return (
+        input.activeTurnId !== null ||
+        input.previousCanInterrupt ||
+        input.latestTurnCompletedAt === null
+      );
+    case "starting":
+    case "ready":
+      return input.previousCanInterrupt && !latestTurnSettled;
+    default:
+      return false;
+  }
+}
+
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
@@ -1024,6 +1048,12 @@ const make = Effect.gen(function* () {
               providerName: event.provider,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
+              canInterrupt: deriveSessionCanInterrupt({
+                status,
+                activeTurnId: nextActiveTurnId,
+                latestTurnCompletedAt: thread.latestTurn?.completedAt,
+                previousCanInterrupt: thread.session?.canInterrupt ?? false,
+              }),
               lastError,
               updatedAt: now,
             },
@@ -1193,6 +1223,7 @@ const make = Effect.gen(function* () {
               providerName: event.provider,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
+              canInterrupt: false,
               lastError: runtimeErrorMessage,
               updatedAt: now,
             },

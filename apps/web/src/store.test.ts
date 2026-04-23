@@ -35,10 +35,15 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 
 function makeState(thread: Thread): AppState {
   return {
+    workbooks: [],
     projects: [
       {
         id: ProjectId.makeUnsafe("project-1"),
         name: "Project",
+        emoji: null,
+        color: null,
+        groupName: null,
+        groupEmoji: null,
         cwd: "/tmp/project",
         model: "gpt-5-codex",
         expanded: true,
@@ -77,10 +82,15 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
   return {
     snapshotSequence: 1,
     updatedAt: "2026-02-27T00:00:00.000Z",
+    workbooks: [],
     projects: [
       {
         id: ProjectId.makeUnsafe("project-1"),
         title: "Project",
+        emoji: null,
+        color: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/tmp/project",
         defaultModel: "gpt-5.3-codex",
         createdAt: "2026-02-27T00:00:00.000Z",
@@ -99,6 +109,10 @@ function makeReadModelProject(
   return {
     id: ProjectId.makeUnsafe("project-1"),
     title: "Project",
+    emoji: null,
+    color: null,
+    groupName: null,
+    groupEmoji: null,
     workspaceRoot: "/tmp/project",
     defaultModel: "gpt-5.3-codex",
     createdAt: "2026-02-27T00:00:00.000Z",
@@ -154,10 +168,15 @@ describe("store pure functions", () => {
     const project2 = ProjectId.makeUnsafe("project-2");
     const project3 = ProjectId.makeUnsafe("project-3");
     const state: AppState = {
+      workbooks: [],
       projects: [
         {
           id: project1,
           name: "Project 1",
+          emoji: null,
+          color: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-1",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
@@ -166,6 +185,10 @@ describe("store pure functions", () => {
         {
           id: project2,
           name: "Project 2",
+          emoji: null,
+          color: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-2",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
@@ -174,6 +197,10 @@ describe("store pure functions", () => {
         {
           id: project3,
           name: "Project 3",
+          emoji: null,
+          color: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-3",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
@@ -245,10 +272,15 @@ describe("store read model sync", () => {
     const project2 = ProjectId.makeUnsafe("project-2");
     const project3 = ProjectId.makeUnsafe("project-3");
     const initialState: AppState = {
+      workbooks: [],
       projects: [
         {
           id: project2,
           name: "Project 2",
+          emoji: null,
+          color: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-2",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
@@ -257,6 +289,10 @@ describe("store read model sync", () => {
         {
           id: project1,
           name: "Project 1",
+          emoji: null,
+          color: null,
+          groupName: null,
+          groupEmoji: null,
           cwd: "/tmp/project-1",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
@@ -269,6 +305,7 @@ describe("store read model sync", () => {
     const readModel: OrchestrationReadModel = {
       snapshotSequence: 2,
       updatedAt: "2026-02-27T00:00:00.000Z",
+      workbooks: [],
       projects: [
         makeReadModelProject({
           id: project1,
@@ -292,5 +329,45 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+  });
+
+  it("defaults projects to collapsed when no expansion preference has been saved", () => {
+    const readModel = makeReadModel(makeReadModelThread({}));
+
+    const next = syncServerReadModel(
+      {
+        workbooks: [],
+        projects: [],
+        threads: [],
+        threadsHydrated: false,
+      },
+      readModel,
+    );
+
+    expect(next.projects[0]?.expanded).toBe(false);
+  });
+
+  it("hydrates project display metadata from the read model", () => {
+    const initialState = makeState(makeThread());
+    const readModel: OrchestrationReadModel = {
+      ...makeReadModel(makeReadModelThread({})),
+      projects: [
+        makeReadModelProject({
+          emoji: ":)",
+          color: "#4F46E5",
+          groupName: "Workspace",
+          groupEmoji: "rocket",
+        }),
+      ],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects[0]).toMatchObject({
+      emoji: ":)",
+      color: "#4F46E5",
+      groupName: "Workspace",
+      groupEmoji: "rocket",
+    });
   });
 });

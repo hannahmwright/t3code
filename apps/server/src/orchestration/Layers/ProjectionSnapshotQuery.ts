@@ -1,4 +1,7 @@
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   ChatAttachment,
   IsoDateTime,
   MessageId,
@@ -6,7 +9,9 @@ import {
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
+  ProviderInteractionMode,
   ProjectScript,
+  RuntimeMode,
   ThreadId,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -17,6 +22,7 @@ import {
   type OrchestrationSession,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  type OrchestrationWorkbook,
 } from "@t3tools/contracts";
 import { Effect, Layer, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -36,6 +42,8 @@ import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionTh
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionPendingTurnStart } from "../../persistence/Services/ProjectionTurns.ts";
+import { ProjectionWorkbook } from "../../persistence/Services/ProjectionWorkbooks.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -55,7 +63,22 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
-const ProjectionThreadDbRowSchema = ProjectionThread;
+export const ProjectionThreadDbRowSchema = Schema.Struct({
+  ...ProjectionThread.fields,
+  model: Schema.NullOr(Schema.String),
+  runtimeMode: Schema.NullOr(RuntimeMode),
+  interactionMode: Schema.NullOr(ProviderInteractionMode),
+});
+type ProjectionThreadDbRow = Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>;
+
+export function normalizeProjectionThreadRow(row: ProjectionThreadDbRow) {
+  return {
+    ...row,
+    model: row.model ?? DEFAULT_MODEL_BY_PROVIDER.codex,
+    runtimeMode: row.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+    interactionMode: row.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+  };
+}
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
@@ -82,6 +105,7 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
 const ProjectionStateDbRowSchema = ProjectionState;
 
 const REQUIRED_SNAPSHOT_PROJECTORS = [
+  ORCHESTRATION_PROJECTOR_NAMES.workbooks,
   ORCHESTRATION_PROJECTOR_NAMES.projects,
   ORCHESTRATION_PROJECTOR_NAMES.threads,
   ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
@@ -96,6 +120,23 @@ function maxIso(left: string | null, right: string): string {
     return right;
   }
   return left > right ? left : right;
+}
+
+function deriveSessionCanInterrupt(input: {
+  status: OrchestrationSession["status"];
+  activeTurnId: OrchestrationSession["activeTurnId"];
+  latestTurn: OrchestrationLatestTurn | undefined;
+  hasPendingTurnStart: boolean;
+}): boolean {
+  switch (input.status) {
+    case "running":
+      return input.activeTurnId !== null || input.latestTurn?.completedAt === null;
+    case "starting":
+    case "ready":
+      return input.hasPendingTurnStart;
+    default:
+      return false;
+  }
 }
 
 function computeSnapshotSequence(
@@ -132,6 +173,23 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  const listWorkbookRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionWorkbook,
+    execute: () =>
+      sql`
+        SELECT
+          workbook_id AS "workbookId",
+          name,
+          emoji,
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          deleted_at AS "deletedAt"
+        FROM projection_workbooks
+        ORDER BY created_at ASC, workbook_id ASC
+      `,
+  });
+
   const listProjectRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionProjectDbRowSchema,
@@ -139,15 +197,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           project_id AS "projectId",
-          title,
-          workspace_root AS "workspaceRoot",
-          default_model AS "defaultModel",
-          scripts_json AS "scripts",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          projection_projects.title AS "title",
+          projection_projects.emoji AS "emoji",
+          projection_projects.color AS "color",
+          projection_projects.workbook_id AS "workbookId",
+          COALESCE(projection_workbooks.name, projection_projects.group_name) AS "groupName",
+          COALESCE(projection_workbooks.emoji, projection_projects.group_emoji) AS "groupEmoji",
+          projection_projects.workspace_root AS "workspaceRoot",
+          projection_projects.default_model AS "defaultModel",
+          projection_projects.scripts_json AS "scripts",
+          projection_projects.created_at AS "createdAt",
+          projection_projects.updated_at AS "updatedAt",
+          projection_projects.deleted_at AS "deletedAt"
         FROM projection_projects
-        ORDER BY created_at ASC, project_id ASC
+        LEFT JOIN projection_workbooks
+          ON projection_workbooks.workbook_id = projection_projects.workbook_id
+        ORDER BY projection_projects.created_at ASC, projection_projects.project_id ASC
       `,
   });
 
@@ -299,6 +364,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listPendingTurnStartRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionPendingTurnStart,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          source_proposed_plan_id AS "sourceProposedPlanId",
+          requested_at AS "requestedAt"
+        FROM projection_turns
+        WHERE turn_id IS NULL
+        ORDER BY thread_id ASC, requested_at DESC
+      `,
+  });
+
   const listProjectionStateRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionStateDbRowSchema,
@@ -317,6 +399,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           const [
+            workbookRows,
             projectRows,
             threadRows,
             messageRows,
@@ -325,8 +408,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             sessionRows,
             checkpointRows,
             latestTurnRows,
+            pendingTurnStartRows,
             stateRows,
           ] = yield* Effect.all([
+            listWorkbookRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listWorkbooks:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listWorkbooks:decodeRows",
+                ),
+              ),
+            ),
             listProjectRows(undefined).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
@@ -391,6 +483,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 ),
               ),
             ),
+            listPendingTurnStartRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listPendingTurnStarts:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listPendingTurnStarts:decodeRows",
+                ),
+              ),
+            ),
             listProjectionStateRows(undefined).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
@@ -407,9 +507,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
           const sessionsByThread = new Map<string, OrchestrationSession>();
           const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+          const pendingTurnStartsByThread = new Map<
+            string,
+            Schema.Schema.Type<typeof ProjectionPendingTurnStart>
+          >();
 
           let updatedAt: string | null = null;
 
+          for (const row of workbookRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+          }
           for (const row of projectRows) {
             updatedAt = maxIso(updatedAt, row.updatedAt);
           }
@@ -518,6 +625,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             });
           }
 
+          for (const row of pendingTurnStartRows) {
+            updatedAt = maxIso(updatedAt, row.requestedAt);
+            if (!pendingTurnStartsByThread.has(row.threadId)) {
+              pendingTurnStartsByThread.set(row.threadId, row);
+            }
+          }
+
           for (const row of sessionRows) {
             updatedAt = maxIso(updatedAt, row.updatedAt);
             sessionsByThread.set(row.threadId, {
@@ -526,14 +640,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               providerName: row.providerName,
               runtimeMode: row.runtimeMode,
               activeTurnId: row.activeTurnId,
+              canInterrupt: deriveSessionCanInterrupt({
+                status: row.status,
+                activeTurnId: row.activeTurnId,
+                latestTurn: latestTurnByThread.get(row.threadId),
+                hasPendingTurnStart: pendingTurnStartsByThread.has(row.threadId),
+              }),
               lastError: row.lastError,
               updatedAt: row.updatedAt,
             });
           }
 
+          const workbooks: Array<OrchestrationWorkbook> = workbookRows.map((row) => ({
+            id: row.workbookId,
+            name: row.name,
+            emoji: row.emoji,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+            deletedAt: row.deletedAt,
+          }));
+
           const projects: Array<OrchestrationProject> = projectRows.map((row) => ({
             id: row.projectId,
             title: row.title,
+            emoji: row.emoji,
+            color: row.color,
+            workbookId: row.workbookId,
+            groupName: row.groupName,
+            groupEmoji: row.groupEmoji,
             workspaceRoot: row.workspaceRoot,
             defaultModel: row.defaultModel,
             scripts: row.scripts,
@@ -542,28 +676,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             deletedAt: row.deletedAt,
           }));
 
-          const threads: Array<OrchestrationThread> = threadRows.map((row) => ({
-            id: row.threadId,
-            projectId: row.projectId,
-            title: row.title,
-            model: row.model,
-            runtimeMode: row.runtimeMode,
-            interactionMode: row.interactionMode,
-            branch: row.branch,
-            worktreePath: row.worktreePath,
-            latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-            deletedAt: row.deletedAt,
-            messages: messagesByThread.get(row.threadId) ?? [],
-            proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
-            activities: activitiesByThread.get(row.threadId) ?? [],
-            checkpoints: checkpointsByThread.get(row.threadId) ?? [],
-            session: sessionsByThread.get(row.threadId) ?? null,
-          }));
+          const threads: Array<OrchestrationThread> = threadRows.map((row) => {
+            const normalizedRow = normalizeProjectionThreadRow(row);
+            return {
+              id: normalizedRow.threadId,
+              projectId: normalizedRow.projectId,
+              title: normalizedRow.title,
+              model: normalizedRow.model,
+              runtimeMode: normalizedRow.runtimeMode,
+              interactionMode: normalizedRow.interactionMode,
+              branch: normalizedRow.branch,
+              worktreePath: normalizedRow.worktreePath,
+              latestTurn: latestTurnByThread.get(normalizedRow.threadId) ?? null,
+              createdAt: normalizedRow.createdAt,
+              updatedAt: normalizedRow.updatedAt,
+              deletedAt: normalizedRow.deletedAt,
+              messages: messagesByThread.get(normalizedRow.threadId) ?? [],
+              proposedPlans: proposedPlansByThread.get(normalizedRow.threadId) ?? [],
+              activities: activitiesByThread.get(normalizedRow.threadId) ?? [],
+              checkpoints: checkpointsByThread.get(normalizedRow.threadId) ?? [],
+              session: sessionsByThread.get(normalizedRow.threadId) ?? null,
+            };
+          });
 
           const snapshot = {
             snapshotSequence: computeSnapshotSequence(stateRows),
+            workbooks,
             projects,
             threads,
             updatedAt: updatedAt ?? new Date(0).toISOString(),

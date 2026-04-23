@@ -1,11 +1,23 @@
-import { CheckpointRef, EventId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  DEFAULT_MODEL_BY_PROVIDER,
+  EventId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import {
+  OrchestrationProjectionSnapshotQueryLive,
+  ProjectionThreadDbRowSchema,
+  normalizeProjectionThreadRow,
+} from "./ProjectionSnapshotQuery.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
@@ -229,10 +241,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       assert.equal(snapshot.snapshotSequence, 5);
       assert.equal(snapshot.updatedAt, "2026-02-24T00:00:09.000Z");
+      assert.deepEqual(snapshot.workbooks, []);
       assert.deepEqual(snapshot.projects, [
         {
           id: asProjectId("project-1"),
           title: "Project 1",
+          emoji: null,
+          color: null,
+          workbookId: null,
+          groupName: null,
+          groupEmoji: null,
           workspaceRoot: "/tmp/project-1",
           defaultModel: "gpt-5-codex",
           scripts: [
@@ -324,6 +342,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             providerName: "codex",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
+            canInterrupt: true,
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
@@ -331,4 +350,26 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
     }),
   );
+
+  it("falls back to default thread fields when decoding a legacy projection row", () => {
+    const row = Schema.decodeUnknownSync(ProjectionThreadDbRowSchema)({
+      threadId: ThreadId.makeUnsafe("thread-legacy"),
+      projectId: ProjectId.makeUnsafe("project-1"),
+      title: "Legacy Thread",
+      model: null,
+      runtimeMode: null,
+      interactionMode: null,
+      branch: null,
+      worktreePath: null,
+      latestTurnId: null,
+      createdAt: "2026-02-24T00:00:02.000Z",
+      updatedAt: "2026-02-24T00:00:03.000Z",
+      deletedAt: null,
+    });
+    const normalizedRow = normalizeProjectionThreadRow(row);
+
+    assert.equal(normalizedRow.model, DEFAULT_MODEL_BY_PROVIDER.codex);
+    assert.equal(normalizedRow.runtimeMode, "full-access");
+    assert.equal(normalizedRow.interactionMode, "default");
+  });
 });

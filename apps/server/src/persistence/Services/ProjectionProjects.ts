@@ -6,7 +6,7 @@
  *
  * @module ProjectionProjectRepository
  */
-import { IsoDateTime, ProjectId, ProjectScript } from "@t3tools/contracts";
+import { IsoDateTime, ProjectId, ProjectScript, WorkbookId } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
@@ -15,6 +15,11 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 export const ProjectionProject = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
+  emoji: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  color: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  workbookId: Schema.NullOr(WorkbookId).pipe(Schema.withDecodingDefault(() => null)),
+  groupName: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  groupEmoji: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
   workspaceRoot: Schema.String,
   defaultModel: Schema.NullOr(Schema.String),
   scripts: Schema.Array(ProjectScript),

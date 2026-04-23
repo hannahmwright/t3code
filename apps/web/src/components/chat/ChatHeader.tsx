@@ -13,6 +13,7 @@ import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScr
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
+import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
@@ -24,6 +25,7 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
+  showDesktopActions: boolean;
   terminalAvailable: boolean;
   terminalOpen: boolean;
   terminalToggleShortcutLabel: string | null;
@@ -48,6 +50,7 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
+  showDesktopActions,
   terminalAvailable,
   terminalOpen,
   terminalToggleShortcutLabel,
@@ -63,15 +66,30 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 gap-2 overflow-hidden sm:gap-3",
+          showDesktopActions ? "items-center" : "items-start",
+        )}
+      >
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <h2
-          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-          title={activeThreadTitle}
-        >
-          {activeThreadTitle}
-        </h2>
-        {activeProjectName && (
+        <div className="min-w-0 flex-1">
+          <h2
+            className={cn(
+              "min-w-0 font-medium text-foreground",
+              showDesktopActions ? "shrink truncate text-sm" : "text-sm leading-tight",
+            )}
+            title={activeThreadTitle}
+          >
+            {activeThreadTitle}
+          </h2>
+          {activeProjectName && !showDesktopActions && (
+            <p className="mt-0.5 wrap-anywhere text-xs leading-snug text-muted-foreground/85">
+              {activeProjectName}
+            </p>
+          )}
+        </div>
+        {activeProjectName && showDesktopActions && (
           <Badge variant="outline" className="min-w-0 shrink truncate">
             {activeProjectName}
           </Badge>
@@ -83,7 +101,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
-        {activeProjectScripts && (
+        {showDesktopActions && activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             keybindings={keybindings}
@@ -94,38 +112,42 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {activeProjectName && (
+        {showDesktopActions && activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={terminalOpen}
-                onPressedChange={onToggleTerminal}
-                aria-label="Toggle terminal drawer"
-                variant="outline"
-                size="xs"
-                disabled={!terminalAvailable}
-              >
-                <TerminalSquareIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!terminalAvailable
-              ? "Terminal is unavailable until this thread has an active project."
-              : terminalToggleShortcutLabel
-                ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                : "Toggle terminal drawer"}
-          </TooltipPopup>
-        </Tooltip>
+        {showDesktopActions && activeProjectName && (
+          <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />
+        )}
+        {showDesktopActions && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={terminalOpen}
+                  onPressedChange={onToggleTerminal}
+                  aria-label="Toggle terminal drawer"
+                  variant="outline"
+                  size="xs"
+                  disabled={!terminalAvailable}
+                >
+                  <TerminalSquareIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!terminalAvailable
+                ? "Terminal is unavailable until this thread has an active project."
+                : terminalToggleShortcutLabel
+                  ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
+                  : "Toggle terminal drawer"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger
             render={

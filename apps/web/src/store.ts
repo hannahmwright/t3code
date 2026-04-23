@@ -12,12 +12,14 @@ import {
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread } from "./types";
+import { resolvePrimaryEnvironmentHttpUrl } from "./primaryEnvironment";
+import { type ChatMessage, type Project, type Thread, type Workbook } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
 
 export interface AppState {
+  workbooks: Workbook[];
   projects: Project[];
   threads: Thread[];
   threadsHydrated: boolean;
@@ -37,6 +39,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 ] as const;
 
 const initialState: AppState = {
+  workbooks: [],
   projects: [],
   threads: [],
   threadsHydrated: false,
@@ -48,6 +51,8 @@ const persistedProjectOrderCwds: string[] = [];
 
 function readPersistedState(): AppState {
   if (typeof window === "undefined") return initialState;
+  persistedExpandedProjectCwds.clear();
+  persistedProjectOrderCwds.length = 0;
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
@@ -55,8 +60,6 @@ function readPersistedState(): AppState {
       expandedProjectCwds?: string[];
       projectOrderCwds?: string[];
     };
-    persistedExpandedProjectCwds.clear();
-    persistedProjectOrderCwds.length = 0;
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
@@ -136,15 +139,16 @@ function mapProjectsFromReadModel(
     return {
       id: project.id,
       name: project.title,
+      emoji: project.emoji,
+      color: project.color ?? null,
+      workbookId: project.workbookId ?? null,
+      groupName: project.groupName,
+      groupEmoji: project.groupEmoji ?? null,
       cwd: project.workspaceRoot,
       model:
         existing?.model ??
         resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex),
-      expanded:
-        existing?.expanded ??
-        (persistedExpandedProjectCwds.size > 0
-          ? persistedExpandedProjectCwds.has(project.workspaceRoot)
-          : true),
+      expanded: existing?.expanded ?? persistedExpandedProjectCwds.has(project.workspaceRoot),
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       scripts: project.scripts.map((script) => ({ ...script })),
@@ -168,6 +172,21 @@ function mapProjectsFromReadModel(
       return a.incomingIndex - b.incomingIndex;
     })
     .map((entry) => entry.project);
+}
+
+function mapWorkbooksFromReadModel(
+  incoming: OrchestrationReadModel["workbooks"],
+  _previous: Workbook[],
+): Workbook[] {
+  return (incoming ?? []).map((workbook) => {
+    return {
+      id: workbook.id,
+      name: workbook.name,
+      emoji: workbook.emoji ?? null,
+      createdAt: workbook.createdAt,
+      updatedAt: workbook.updatedAt,
+    } satisfies Workbook;
+  });
 }
 
 function toLegacySessionStatus(
@@ -206,30 +225,9 @@ function inferProviderForThreadModel(input: {
   return inferProviderForModel(input.model);
 }
 
-function resolveWsHttpOrigin(): string {
-  if (typeof window === "undefined") return "";
-  const bridgeWsUrl = window.desktopBridge?.getWsUrl?.();
-  const envWsUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  const wsCandidate =
-    typeof bridgeWsUrl === "string" && bridgeWsUrl.length > 0
-      ? bridgeWsUrl
-      : typeof envWsUrl === "string" && envWsUrl.length > 0
-        ? envWsUrl
-        : null;
-  if (!wsCandidate) return window.location.origin;
-  try {
-    const wsUrl = new URL(wsCandidate);
-    const protocol =
-      wsUrl.protocol === "wss:" ? "https:" : wsUrl.protocol === "ws:" ? "http:" : wsUrl.protocol;
-    return `${protocol}//${wsUrl.host}`;
-  } catch {
-    return window.location.origin;
-  }
-}
-
 function toAttachmentPreviewUrl(rawUrl: string): string {
   if (rawUrl.startsWith("/")) {
-    return `${resolveWsHttpOrigin()}${rawUrl}`;
+    return resolvePrimaryEnvironmentHttpUrl(rawUrl);
   }
   return rawUrl;
 }
@@ -241,6 +239,10 @@ function attachmentPreviewRoutePath(attachmentId: string): string {
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
+  const workbooks = mapWorkbooksFromReadModel(
+    (readModel.workbooks ?? []).filter((workbook) => workbook.deletedAt === null),
+    state.workbooks,
+  );
   const projects = mapProjectsFromReadModel(
     readModel.projects.filter((project) => project.deletedAt === null),
     state.projects,
@@ -270,6 +272,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
               status: toLegacySessionStatus(thread.session.status),
               orchestrationStatus: thread.session.status,
               activeTurnId: thread.session.activeTurnId ?? undefined,
+              canInterrupt: thread.session.canInterrupt ?? false,
               createdAt: thread.session.updatedAt,
               updatedAt: thread.session.updatedAt,
               ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
@@ -288,6 +291,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
             id: message.id,
             role: message.role,
             text: message.text,
+            turnId: message.turnId,
             createdAt: message.createdAt,
             streaming: message.streaming,
             ...(message.streaming ? {} : { completedAt: message.updatedAt }),
@@ -325,6 +329,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     });
   return {
     ...state,
+    workbooks,
     projects,
     threads,
     threadsHydrated: true,

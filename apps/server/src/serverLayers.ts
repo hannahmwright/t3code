@@ -33,6 +33,9 @@ import { GitHubCliLive } from "./git/Layers/GitHubCli";
 import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { PtyAdapter } from "./terminal/Services/PTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { PushNotificationServiceLive } from "./notifications/Layers/PushNotificationService";
+import { AuthSessionRepositoryLive } from "./persistence/Layers/AuthSessions";
+import { ServerAuth, ServerAuthLive } from "./auth/ServerAuth";
 
 type RuntimePtyAdapterLoader = {
   layer: Layer.Layer<PtyAdapter, never, FileSystem.FileSystem | Path.Path>;
@@ -130,12 +133,21 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(GitHubCliLive),
     Layer.provideMerge(textGenerationLayer),
   );
+  const pushNotificationLayer = PushNotificationServiceLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+  );
+  const authLayer = Layer.effect(ServerAuth, ServerAuthLive).pipe(
+    Layer.provideMerge(AuthSessionRepositoryLive),
+  );
 
   return Layer.mergeAll(
+    runtimeServicesLayer,
     orchestrationReactorLayer,
     GitCoreLive,
     gitManagerLayer,
     terminalLayer,
     KeybindingsLive,
+    pushNotificationLayer,
+    authLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

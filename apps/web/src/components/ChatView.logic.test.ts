@@ -1,7 +1,12 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildExpiredTerminalContextToastCopy, deriveComposerSendState } from "./ChatView.logic";
+import {
+  buildExpiredTerminalContextToastCopy,
+  deriveComposerPrimaryActionState,
+  deriveComposerSendState,
+  shouldResetSendPhase,
+} from "./ChatView.logic";
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
@@ -65,5 +70,65 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("shouldResetSendPhase", () => {
+  it("keeps idle state untouched", () => {
+    expect(
+      shouldResetSendPhase({
+        sendPhase: "idle",
+        isTurnRunning: false,
+        latestTurnSettled: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        hasThreadError: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("resets when the latest turn has already settled", () => {
+    expect(
+      shouldResetSendPhase({
+        sendPhase: "sending-turn",
+        isTurnRunning: false,
+        latestTurnSettled: true,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        hasThreadError: false,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("deriveComposerPrimaryActionState", () => {
+  it("prioritizes pending user input over all other composer actions", () => {
+    expect(
+      deriveComposerPrimaryActionState({
+        hasPendingUserInput: true,
+        canInterrupt: true,
+        showPlanFollowUpPrompt: true,
+      }),
+    ).toBe("pending-user-input");
+  });
+
+  it("shows interrupt whenever the server marks the thread interruptible", () => {
+    expect(
+      deriveComposerPrimaryActionState({
+        hasPendingUserInput: false,
+        canInterrupt: true,
+        showPlanFollowUpPrompt: true,
+      }),
+    ).toBe("interrupt");
+  });
+
+  it("falls back to plan follow-up when nothing is interruptible", () => {
+    expect(
+      deriveComposerPrimaryActionState({
+        hasPendingUserInput: false,
+        canInterrupt: false,
+        showPlanFollowUpPrompt: true,
+      }),
+    ).toBe("plan-follow-up");
   });
 });

@@ -215,6 +215,7 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     createdAt: string,
     options?: {
+      readonly canInterrupt?: boolean;
       readonly provider?: ProviderKind;
       readonly model?: string;
       readonly modelOptions?: ProviderModelOptions;
@@ -282,7 +283,10 @@ const make = Effect.gen(function* () {
         runtimeMode: desiredRuntimeMode,
       });
 
-    const bindSessionToThread = (session: ProviderSession) =>
+    const bindSessionToThread = (
+      session: ProviderSession,
+      options?: { readonly canInterrupt?: boolean },
+    ) =>
       setThreadSession({
         threadId,
         session: {
@@ -292,19 +296,20 @@ const make = Effect.gen(function* () {
           runtimeMode: desiredRuntimeMode,
           // Provider turn ids are not orchestration turn ids.
           activeTurnId: null,
+          canInterrupt: options?.canInterrupt ?? false,
           lastError: session.lastError ?? null,
           updatedAt: session.updatedAt,
         },
         createdAt,
       });
 
+    const activeSession = yield* resolveActiveSession(threadId);
     const existingSessionThreadId =
-      thread.session && thread.session.status !== "stopped" ? thread.id : null;
+      thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged =
         options?.provider !== undefined && options.provider !== currentProvider;
-      const activeSession = yield* resolveActiveSession(existingSessionThreadId);
       const sessionModelSwitch =
         currentProvider === undefined
           ? "in-session"
@@ -355,14 +360,18 @@ const make = Effect.gen(function* () {
         provider: restartedSession.provider,
         runtimeMode: restartedSession.runtimeMode,
       });
-      yield* bindSessionToThread(restartedSession);
+      yield* bindSessionToThread(restartedSession, {
+        canInterrupt: options?.canInterrupt ?? false,
+      });
       return restartedSession.threadId;
     }
 
     const startedSession = yield* startProviderSession(
       options?.provider !== undefined ? { provider: options.provider } : undefined,
     );
-    yield* bindSessionToThread(startedSession);
+    yield* bindSessionToThread(startedSession, {
+      canInterrupt: options?.canInterrupt ?? false,
+    });
     return startedSession.threadId;
   });
 
@@ -382,6 +391,7 @@ const make = Effect.gen(function* () {
       return;
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      canInterrupt: true,
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
@@ -682,6 +692,7 @@ const make = Effect.gen(function* () {
         providerName: thread.session?.providerName ?? null,
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
+        canInterrupt: false,
         lastError: thread.session?.lastError ?? null,
         updatedAt: now,
       },

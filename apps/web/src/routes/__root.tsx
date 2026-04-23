@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { type OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -11,6 +11,8 @@ import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
+import { ServerAuthGate } from "../components/ServerAuthGate";
+import { TurnCompletionNotifications } from "../TurnCompletionNotifications";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
@@ -20,10 +22,16 @@ import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDra
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
-import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
+import { onServerConfigUpdated, onServerWelcome, onTransportStateChange } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import {
+  readStoredActiveThreadId,
+  selectStartupThreadId,
+  writeStoredActiveThreadId,
+} from "../rootThreadRestore";
+import { ServerAuthProvider } from "../serverAuthContext";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -35,7 +43,19 @@ export const Route = createRootRouteWithContext<{
   }),
 });
 
+const SNAPSHOT_RECOVERY_RETRY_MS = 1_000;
+
 function RootRouteView() {
+  return (
+    <ServerAuthProvider>
+      <ServerAuthGate>
+        <AuthenticatedRootRouteView />
+      </ServerAuthGate>
+    </ServerAuthProvider>
+  );
+}
+
+function AuthenticatedRootRouteView() {
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -52,6 +72,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <EventRouter />
+        <TurnCompletionNotifications />
         <DesktopProjectBootstrap />
         <Outlet />
       </AnchoredToastProvider>
@@ -139,23 +160,69 @@ function EventRouter() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const activeRouteThreadId = useRouterState({
+    select: (state) => {
+      for (let index = state.matches.length - 1; index >= 0; index -= 1) {
+        const candidate = state.matches[index];
+        const threadId =
+          candidate && "threadId" in candidate.params ? candidate.params.threadId : undefined;
+        if (typeof threadId === "string" && threadId.length > 0) {
+          return threadId;
+        }
+      }
+      return null;
+    },
+  });
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
 
   pathnameRef.current = pathname;
 
   useEffect(() => {
+    if (!activeRouteThreadId || typeof window === "undefined") {
+      return;
+    }
+    writeStoredActiveThreadId(window.localStorage, activeRouteThreadId);
+  }, [activeRouteThreadId]);
+
+  useEffect(() => {
     const api = readNativeApi();
     if (!api) return;
     let disposed = false;
     let latestSequence = 0;
+    let latestSnapshot: OrchestrationReadModel | null = null;
+    let latestWelcomePayload: {
+      bootstrapProjectId: string | null;
+      bootstrapThreadId: string | null;
+    } | null = null;
     let syncing = false;
     let pending = false;
     let needsProviderInvalidation = false;
+    let snapshotRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearSnapshotRetry = () => {
+      if (snapshotRetryTimer === null) {
+        return;
+      }
+      clearTimeout(snapshotRetryTimer);
+      snapshotRetryTimer = null;
+    };
+
+    const scheduleSnapshotRetry = () => {
+      if (disposed || snapshotRetryTimer !== null) {
+        return;
+      }
+      snapshotRetryTimer = setTimeout(() => {
+        snapshotRetryTimer = null;
+        void syncSnapshot();
+      }, SNAPSHOT_RECOVERY_RETRY_MS);
+    };
 
     const flushSnapshotSync = async (): Promise<void> => {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
+      clearSnapshotRetry();
+      latestSnapshot = snapshot;
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
       syncServerReadModel(snapshot);
       clearPromotedDraftThreads(new Set(snapshot.threads.map((t) => t.id)));
@@ -167,10 +234,47 @@ function EventRouter() {
         draftThreadIds,
       });
       removeOrphanedTerminalStates(activeThreadIds);
+      if (needsProviderInvalidation) {
+        needsProviderInvalidation = false;
+        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+        // Invalidate workspace entry queries so the @-mention file picker
+        // reflects files created, deleted, or restored during this turn.
+        void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      }
       if (pending) {
         pending = false;
         await flushSnapshotSync();
+        return;
       }
+
+      if (!latestWelcomePayload?.bootstrapProjectId || !latestWelcomePayload?.bootstrapThreadId) {
+        await restoreStartupThread();
+      }
+    };
+
+    const restoreStartupThread = async () => {
+      if (disposed || pathnameRef.current !== "/" || latestSnapshot === null) {
+        return;
+      }
+
+      const storedThreadId =
+        typeof window === "undefined" ? null : readStoredActiveThreadId(window.localStorage);
+      const targetThreadId = selectStartupThreadId(latestSnapshot, storedThreadId);
+      if (!targetThreadId || handledBootstrapThreadIdRef.current === targetThreadId) {
+        return;
+      }
+
+      const targetThread = latestSnapshot.threads.find((thread) => thread.id === targetThreadId);
+      if (targetThread) {
+        setProjectExpanded(targetThread.projectId, true);
+      }
+
+      await navigate({
+        to: "/$threadId",
+        params: { threadId: ThreadId.makeUnsafe(targetThreadId) },
+        replace: true,
+      });
+      handledBootstrapThreadIdRef.current = targetThreadId;
     };
 
     const syncSnapshot = async () => {
@@ -183,20 +287,15 @@ function EventRouter() {
       try {
         await flushSnapshotSync();
       } catch {
-        // Keep prior state and wait for next domain event to trigger a resync.
+        // Keep prior state and retry so reconnect/startup eventually heals even
+        // when there isn't another domain event to kick the loop.
+        scheduleSnapshotRetry();
       }
       syncing = false;
     };
 
     const domainEventFlushThrottler = new Throttler(
       () => {
-        if (needsProviderInvalidation) {
-          needsProviderInvalidation = false;
-          void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
-          // Invalidate workspace entry queries so the @-mention file picker
-          // reflects files created, deleted, or restored during this turn.
-          void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
-        }
         void syncSnapshot();
       },
       {
@@ -210,11 +309,23 @@ function EventRouter() {
       if (event.sequence <= latestSequence) {
         return;
       }
+      const hasSequenceGap = event.sequence > latestSequence + 1;
       latestSequence = event.sequence;
       if (event.type === "thread.turn-diff-completed" || event.type === "thread.reverted") {
         needsProviderInvalidation = true;
       }
+      if (hasSequenceGap) {
+        needsProviderInvalidation = true;
+        void syncSnapshot();
+        return;
+      }
       domainEventFlushThrottler.maybeExecute();
+    });
+    const unsubTransportState = onTransportStateChange((state) => {
+      if (state === "open") {
+        needsProviderInvalidation = true;
+        void syncSnapshot();
+      }
     });
     const unsubTerminalEvent = api.terminal.onEvent((event) => {
       const hasRunningSubprocess = terminalRunningSubprocessFromEvent(event);
@@ -230,6 +341,10 @@ function EventRouter() {
         );
     });
     const unsubWelcome = onServerWelcome((payload) => {
+      latestWelcomePayload = {
+        bootstrapProjectId: payload.bootstrapProjectId ?? null,
+        bootstrapThreadId: payload.bootstrapThreadId ?? null,
+      };
       void (async () => {
         await syncSnapshot();
         if (disposed) {
@@ -237,6 +352,7 @@ function EventRouter() {
         }
 
         if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
+          await restoreStartupThread();
           return;
         }
         setProjectExpanded(payload.bootstrapProjectId, true);
@@ -304,8 +420,10 @@ function EventRouter() {
     return () => {
       disposed = true;
       needsProviderInvalidation = false;
+      clearSnapshotRetry();
       domainEventFlushThrottler.cancel();
       unsubDomainEvent();
+      unsubTransportState();
       unsubTerminalEvent();
       unsubWelcome();
       unsubServerConfigUpdated();

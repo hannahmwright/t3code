@@ -116,6 +116,15 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    diagnostics: {
+      mode: "web",
+      port: 3773,
+      host: null,
+      baseDir: "/repo/.t3",
+      stateDir: "/repo/.t3/userdata",
+      staticDir: null,
+      authEnabled: true,
+    },
   };
 }
 
@@ -220,6 +229,10 @@ function createSnapshotForTargetUser(options: {
       {
         id: PROJECT_ID,
         title: "Project",
+        emoji: null,
+        color: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/repo/project",
         defaultModel: "gpt-5",
         scripts: [],

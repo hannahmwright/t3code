@@ -5,6 +5,7 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
   OrchestrationProposedPlan,
@@ -23,6 +24,7 @@ const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartC
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
+const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
@@ -74,6 +76,10 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
       commandId: " cmd-1 ",
       projectId: " project-1 ",
       title: " Project Title ",
+      emoji: "  :)  ",
+      color: "#4F46E5",
+      groupName: " Workspace ",
+      groupEmoji: "  :rocket:  ",
       workspaceRoot: " /tmp/workspace ",
       defaultModel: " gpt-5.2 ",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -81,6 +87,10 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
     assert.strictEqual(parsed.commandId, "cmd-1");
     assert.strictEqual(parsed.projectId, "project-1");
     assert.strictEqual(parsed.title, "Project Title");
+    assert.strictEqual(parsed.emoji, ":)");
+    assert.strictEqual(parsed.color, "#4F46E5");
+    assert.strictEqual(parsed.groupName, "Workspace");
+    assert.strictEqual(parsed.groupEmoji, ":rocket:");
     assert.strictEqual(parsed.workspaceRoot, "/tmp/workspace");
     assert.strictEqual(parsed.defaultModel, "gpt-5.2");
   }),
@@ -283,6 +293,7 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.canInterrupt, false);
   }),
 );
 
@@ -297,6 +308,43 @@ it.effect("defaults proposed plan implementation metadata for historical rows", 
     });
     assert.strictEqual(parsed.implementedAt, null);
     assert.strictEqual(parsed.implementationThreadId, null);
+  }),
+);
+
+it.effect("defaults legacy project.created payload fields for historical events", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-1",
+      aggregateKind: "project",
+      aggregateId: "project-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.created",
+      payload: {
+        projectId: "project-1",
+        title: "Project 1",
+        color: "#4F46E5",
+        workspaceRoot: "/tmp/project-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(parsed.type, "project.created");
+    if (parsed.type !== "project.created") {
+      assert.fail("expected project.created event");
+    }
+
+    assert.strictEqual(parsed.payload.emoji, null);
+    assert.strictEqual(parsed.payload.color, "#4F46E5");
+    assert.strictEqual(parsed.payload.groupName, null);
+    assert.strictEqual(parsed.payload.groupEmoji, null);
+    assert.strictEqual(parsed.payload.defaultModel, null);
+    assert.deepStrictEqual(parsed.payload.scripts, []);
   }),
 );
 

@@ -1,4 +1,4 @@
-import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, ProjectId, ThreadId, WorkbookId } from "@t3tools/contracts";
 import { type CxOptions, cx } from "class-variance-authority";
 import { twMerge } from "tailwind-merge";
 import * as Random from "effect/Random";
@@ -30,6 +30,8 @@ export function randomUUID(): string {
 export const newCommandId = (): CommandId => CommandId.makeUnsafe(randomUUID());
 
 export const newProjectId = (): ProjectId => ProjectId.makeUnsafe(randomUUID());
+
+export const newWorkbookId = (): WorkbookId => WorkbookId.makeUnsafe(randomUUID());
 
 export const newThreadId = (): ThreadId => ThreadId.makeUnsafe(randomUUID());
 

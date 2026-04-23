@@ -208,6 +208,11 @@ describe("classifyCodexStderrLine", () => {
 });
 
 describe("normalizeCodexModelSlug", () => {
+  it("maps 5.5 aliases to gpt-5.5", () => {
+    expect(normalizeCodexModelSlug("5.5")).toBe("gpt-5.5");
+    expect(normalizeCodexModelSlug("gpt-5.5-codex")).toBe("gpt-5.5");
+  });
+
   it("maps 5.3 aliases to gpt-5.3-codex", () => {
     expect(normalizeCodexModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeCodexModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
@@ -295,7 +300,7 @@ describe("resolveCodexModelForAccount", () => {
         planType: "plus",
         sparkEnabled: false,
       }),
-    ).toBe("gpt-5.3-codex");
+    ).toBe("gpt-5.5");
   });
 
   it("keeps spark for supported plans", () => {
@@ -538,6 +543,37 @@ describe("sendTurn", () => {
         mode: "default",
         settings: {
           model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("uses GPT-5.5 as the collaboration-mode fallback when no session model is set", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    delete (context.session as { model?: string }).model;
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Please continue",
+      interactionMode: "default",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Please continue",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.5",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.5",
           reasoning_effort: "medium",
           developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
         },

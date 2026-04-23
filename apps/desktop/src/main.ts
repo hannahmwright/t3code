@@ -27,7 +27,9 @@ import { autoUpdater } from "electron-updater";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import { DEFAULT_LOCAL_SERVER_PORT } from "@t3tools/shared/serverDefaults";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import { resolveDesktopBackendPort } from "./backendPort";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -1220,6 +1222,30 @@ function getIconOption(): { icon: string } | Record<string, never> {
   return iconPath ? { icon: iconPath } : {};
 }
 
+function toHttpBaseUrl(rawWsUrl: string): string | null {
+  try {
+    const url = new URL(rawWsUrl);
+    if (url.protocol === "ws:") {
+      url.protocol = "http:";
+    } else if (url.protocol === "wss:") {
+      url.protocol = "https:";
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function buildDesktopAppUrl(): string {
+  const appUrl = new URL(`${DESKTOP_SCHEME}://app/index.html`);
+  const httpBaseUrl = toHttpBaseUrl(backendWsUrl);
+  if (httpBaseUrl) {
+    appUrl.searchParams.set("desktopHttpBaseUrl", httpBaseUrl);
+  }
+  appUrl.searchParams.set("desktopWsBaseUrl", backendWsUrl);
+  return appUrl.toString();
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1100,
@@ -1292,7 +1318,7 @@ function createWindow(): BrowserWindow {
     void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadURL(`${DESKTOP_SCHEME}://app/index.html`);
+    void window.loadURL(buildDesktopAppUrl());
   }
 
   window.on("closed", () => {
@@ -1313,12 +1339,24 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
-  backendPort = await Effect.service(NetService).pipe(
-    Effect.flatMap((net) => net.reserveLoopbackPort()),
+  const preferredBackendPort = resolveDesktopBackendPort(process.env.T3CODE_PORT);
+  const isPreferredBackendPortAvailable = await Effect.service(NetService).pipe(
+    Effect.flatMap((net) => net.isPortAvailableOnLoopback(preferredBackendPort)),
     Effect.provide(NetService.layer),
     Effect.runPromise,
   );
-  writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
+  if (!isPreferredBackendPortAvailable) {
+    throw new Error(
+      `Shared backend port ${preferredBackendPort} is unavailable. ` +
+        `T3 Code uses a fixed local port so the desktop app and remote PWA can share one server. ` +
+        `Free port ${preferredBackendPort} or set T3CODE_PORT to a different fixed port before launching the app.`,
+    );
+  }
+
+  backendPort = preferredBackendPort;
+  writeDesktopLogHeader(
+    `bootstrap using shared backend port=${backendPort} default=${DEFAULT_LOCAL_SERVER_PORT}`,
+  );
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
   process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;

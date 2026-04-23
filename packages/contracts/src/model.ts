@@ -33,6 +33,7 @@ type ModelOption = {
 
 export const MODEL_OPTIONS_BY_PROVIDER = {
   codex: [
+    { slug: "gpt-5.5", name: "GPT-5.5" },
     { slug: "gpt-5.4", name: "GPT-5.4" },
     { slug: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
     { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
@@ -41,6 +42,7 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
   claudeAgent: [
+    { slug: "claude-opus-4-7", name: "Claude Opus 4.7" },
     { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
@@ -52,7 +54,7 @@ type BuiltInModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]
 export type ModelSlug = BuiltInModelSlug | (string & {});
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
-  codex: "gpt-5.4",
+  codex: "gpt-5.5",
   claudeAgent: "claude-sonnet-4-6",
 };
 
@@ -63,6 +65,8 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini" as const;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, ModelSlug>> = {
   codex: {
+    "5.5": "gpt-5.5",
+    "gpt-5.5-codex": "gpt-5.5",
     "5.4": "gpt-5.4",
     "5.3": "gpt-5.3-codex",
     "gpt-5.3": "gpt-5.3-codex",
@@ -70,7 +74,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
   claudeAgent: {
-    opus: "claude-opus-4-6",
+    opus: "claude-opus-4-7",
+    "opus-4.7": "claude-opus-4-7",
+    "claude-opus-4.7": "claude-opus-4-7",
     "opus-4.6": "claude-opus-4-6",
     "claude-opus-4.6": "claude-opus-4-6",
     "claude-opus-4-6-20251117": "claude-opus-4-6",

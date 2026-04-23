@@ -57,6 +57,7 @@ import {
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   hasToolActivityForTurn,
+  isSessionActivelyRunningTurn,
   isLatestTurnSettled,
   formatElapsed,
 } from "../session-logic";
@@ -117,6 +118,7 @@ import {
   projectScriptIdFromCommand,
   setupProjectScript,
 } from "~/projectScripts";
+import { buildProjectThemeStyle } from "../projectTheme";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
@@ -172,6 +174,7 @@ import {
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
+  deriveComposerPrimaryActionState,
   deriveComposerSendState,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -180,6 +183,7 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   SendPhase,
+  shouldResetSendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 
@@ -490,6 +494,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const activeProjectThemeStyle = useMemo(
+    () => buildProjectThemeStyle(activeProject?.color ?? null),
+    [activeProject?.color],
+  );
+  const activeChatSurfaceStyle = useMemo(
+    () =>
+      activeProjectThemeStyle
+        ? {
+            ...activeProjectThemeStyle,
+            backgroundColor: "var(--project-accent-background)",
+          }
+        : undefined,
+    [activeProjectThemeStyle],
+  );
+  const activeChatHeaderStyle = useMemo(
+    () =>
+      activeProjectThemeStyle
+        ? {
+            ...activeProjectThemeStyle,
+            backgroundColor: "var(--project-accent-background-strong)",
+            boxShadow: "inset 0 -1px 0 var(--project-accent-border)",
+          }
+        : undefined,
+    [activeProjectThemeStyle],
+  );
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -658,7 +687,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isTurnRunning = isSessionActivelyRunningTurn(
+    activeLatestTurn,
+    activeThread?.session ?? null,
+  );
+  const canInterruptTurn = activeThread?.session?.canInterrupt ?? false;
+  const isWorking = isTurnRunning || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -744,6 +778,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
   const activePendingApproval = pendingApprovals[0] ?? null;
+  const composerPrimaryActionState = deriveComposerPrimaryActionState({
+    hasPendingUserInput: activePendingProgress !== null,
+    canInterrupt: canInterruptTurn,
+    showPlanFollowUpPrompt,
+  });
   const isComposerApprovalState = activePendingApproval !== null;
   const hasComposerHeader =
     isComposerApprovalState ||
@@ -1829,10 +1868,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     scheduleStickToBottom();
   }, [messageCount, scheduleStickToBottom]);
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!isTurnRunning) return;
     if (!shouldAutoScrollRef.current) return;
     scheduleStickToBottom();
-  }, [phase, scheduleStickToBottom, timelineEntries]);
+  }, [isTurnRunning, scheduleStickToBottom, timelineEntries]);
 
   useEffect(() => {
     setExpandedWorkGroups({});
@@ -2052,14 +2091,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : "local";
 
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!isTurnRunning) return;
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [isTurnRunning]);
 
   const beginSendPhase = useCallback((nextPhase: Exclude<SendPhase, "idle">) => {
     setSendStartedAt((current) => current ?? new Date().toISOString());
@@ -2072,14 +2111,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, []);
 
   useEffect(() => {
-    if (sendPhase === "idle") {
-      return;
-    }
     if (
-      phase === "running" ||
-      activePendingApproval !== null ||
-      activePendingUserInput !== null ||
-      activeThread?.error
+      shouldResetSendPhase({
+        sendPhase,
+        isTurnRunning,
+        latestTurnSettled,
+        hasPendingApproval: activePendingApproval !== null,
+        hasPendingUserInput: activePendingUserInput !== null,
+        hasThreadError: Boolean(activeThread?.error),
+      })
     ) {
       resetSendPhase();
     }
@@ -2087,7 +2127,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingApproval,
     activePendingUserInput,
     activeThread?.error,
-    phase,
+    isTurnRunning,
+    latestTurnSettled,
     resetSendPhase,
     sendPhase,
   ]);
@@ -2310,7 +2351,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const api = readNativeApi();
       if (!api || !activeThread || isRevertingCheckpoint) return;
 
-      if (phase === "running" || isSendBusy || isConnecting) {
+      if (isTurnRunning || isSendBusy || isConnecting) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
@@ -2343,7 +2384,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setIsRevertingCheckpoint(false);
     },
-    [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
+    [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, isTurnRunning, setThreadError],
   );
 
   const onSend = async (e?: { preventDefault: () => void }) => {
@@ -3464,13 +3505,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background"
+      style={activeChatSurfaceStyle}
+    >
       {/* Top bar */}
       <header
         className={cn(
           "border-b border-border px-3 sm:px-5",
           isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
         )}
+        style={activeChatHeaderStyle}
       >
         <ChatHeader
           activeThreadId={activeThread.id}
@@ -3484,6 +3529,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
+          showDesktopActions={isElectron}
           terminalAvailable={activeProject !== undefined}
           terminalOpen={terminalState.terminalOpen}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
@@ -3909,7 +3955,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             Preparing worktree...
                           </span>
                         ) : null}
-                        {activePendingProgress ? (
+                        {composerPrimaryActionState === "pending-user-input" &&
+                        activePendingProgress ? (
                           <div className="flex items-center gap-2">
                             {activePendingProgress.questionIndex > 0 ? (
                               <Button
@@ -3940,7 +3987,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   : "Next question"}
                             </Button>
                           </div>
-                        ) : phase === "running" ? (
+                        ) : composerPrimaryActionState === "interrupt" ? (
                           <button
                             type="button"
                             className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
@@ -3958,7 +4005,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </svg>
                           </button>
                         ) : pendingUserInputs.length === 0 ? (
-                          showPlanFollowUpPrompt ? (
+                          composerPrimaryActionState === "plan-follow-up" ? (
                             prompt.trim().length > 0 ? (
                               <Button
                                 type="submit"

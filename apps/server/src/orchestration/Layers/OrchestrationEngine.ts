@@ -3,6 +3,7 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
+  WorkbookId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
@@ -30,10 +31,17 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "workbook" | "project" | "thread";
+  readonly aggregateId: WorkbookId | ProjectId | ThreadId;
 } {
   switch (command.type) {
+    case "workbook.create":
+    case "workbook.meta.update":
+    case "workbook.delete":
+      return {
+        aggregateKind: "workbook",
+        aggregateId: command.workbookId,
+      };
     case "project.create":
     case "project.meta.update":
     case "project.delete":

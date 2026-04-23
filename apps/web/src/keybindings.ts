@@ -3,11 +3,14 @@ import {
   type KeybindingShortcut,
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+  type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
   type?: string;
+  code?: string;
   key: string;
   metaKey: boolean;
   ctrlKey: boolean;
@@ -30,6 +33,20 @@ const TERMINAL_WORD_BACKWARD = "\u001bb";
 const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
+const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  BracketLeft: ["["],
+  BracketRight: ["]"],
+  Digit0: ["0"],
+  Digit1: ["1"],
+  Digit2: ["2"],
+  Digit3: ["3"],
+  Digit4: ["4"],
+  Digit5: ["5"],
+  Digit6: ["6"],
+  Digit7: ["7"],
+  Digit8: ["8"],
+  Digit9: ["9"],
+};
 
 function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
@@ -37,23 +54,36 @@ function normalizeEventKey(key: string): string {
   return normalized;
 }
 
+function resolveEventKeys(event: ShortcutEventLike): Set<string> {
+  const keys = new Set([normalizeEventKey(event.key)]);
+  const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
+  if (!aliases) {
+    return keys;
+  }
+
+  for (const alias of aliases) {
+    keys.add(alias);
+  }
+  return keys;
+}
+
 function matchesShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): boolean {
-  const key = normalizeEventKey(event.key);
-  if (key !== shortcut.key) return false;
-
   const useMetaForMod = isMacPlatform(platform);
   const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
   const expectedCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
-  return (
+  if (
     event.metaKey === expectedMeta &&
     event.ctrlKey === expectedCtrl &&
     event.shiftKey === shortcut.shiftKey &&
     event.altKey === shortcut.altKey
-  );
+  ) {
+    return resolveEventKeys(event).has(shortcut.key);
+  }
+  return false;
 }
 
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
@@ -104,7 +134,7 @@ export function resolveShortcutCommand(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
-): string | null {
+): KeybindingCommand | null {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
 
@@ -163,6 +193,23 @@ export function shortcutLabelForCommand(
     if (!binding || binding.command !== command) continue;
     return formatShortcutLabel(binding.shortcut, platform);
   }
+  return null;
+}
+
+export function threadJumpCommandForIndex(index: number): ThreadJumpKeybindingCommand | null {
+  return THREAD_JUMP_KEYBINDING_COMMANDS[index] ?? null;
+}
+
+export function threadJumpIndexFromCommand(command: string): number | null {
+  const index = THREAD_JUMP_KEYBINDING_COMMANDS.indexOf(command as ThreadJumpKeybindingCommand);
+  return index === -1 ? null : index;
+}
+
+export function threadTraversalDirectionFromCommand(
+  command: string | null,
+): "previous" | "next" | null {
+  if (command === "thread.previous") return "previous";
+  if (command === "thread.next") return "next";
   return null;
 }
 

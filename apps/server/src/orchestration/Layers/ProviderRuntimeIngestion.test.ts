@@ -2017,7 +2017,7 @@ describe("ProviderRuntimeIngestion", () => {
         usage: {
           usedTokens: 31_251,
           lastUsedTokens: 31_251,
-          maxTokens: 200_000,
+          maxTokens: 1_000_000,
           toolUses: 25,
           durationMs: 43_567,
         },
@@ -2041,7 +2041,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(usageActivity?.payload).toMatchObject({
       usedTokens: 31_251,
       lastUsedTokens: 31_251,
-      maxTokens: 200_000,
+      maxTokens: 1_000_000,
       toolUses: 25,
       durationMs: 43_567,
     });

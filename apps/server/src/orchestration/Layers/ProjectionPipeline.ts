@@ -28,6 +28,7 @@ import {
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionWorkbookRepository } from "../../persistence/Services/ProjectionWorkbooks.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -37,6 +38,7 @@ import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/La
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionWorkbookRepositoryLive } from "../../persistence/Layers/ProjectionWorkbooks.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -50,6 +52,7 @@ import {
 } from "../../attachmentStore.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
+  workbooks: "projection.workbooks",
   projects: "projection.projects",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
@@ -341,6 +344,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
   const projectionStateRepository = yield* ProjectionStateRepository;
+  const projectionWorkbookRepository = yield* ProjectionWorkbookRepository;
   const projectionProjectRepository = yield* ProjectionProjectRepository;
   const projectionThreadRepository = yield* ProjectionThreadRepository;
   const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
@@ -354,13 +358,84 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
 
+  const applyWorkbooksProjection: ProjectorDefinition["apply"] = (event, _attachmentSideEffects) =>
+    Effect.gen(function* () {
+      switch (event.type) {
+        case "workbook.created":
+          yield* projectionWorkbookRepository.upsert({
+            workbookId: event.payload.workbookId,
+            name: event.payload.name,
+            emoji: event.payload.emoji,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            deletedAt: null,
+          });
+          return;
+
+        case "workbook.meta-updated": {
+          const existingRow = yield* projectionWorkbookRepository.getById({
+            workbookId: event.payload.workbookId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionWorkbookRepository.upsert({
+            ...existingRow.value,
+            ...(event.payload.name !== undefined ? { name: event.payload.name } : {}),
+            ...(event.payload.emoji !== undefined ? { emoji: event.payload.emoji } : {}),
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "workbook.deleted": {
+          const existingRow = yield* projectionWorkbookRepository.getById({
+            workbookId: event.payload.workbookId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionWorkbookRepository.upsert({
+            ...existingRow.value,
+            deletedAt: event.payload.deletedAt,
+            updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
   const applyProjectsProjection: ProjectorDefinition["apply"] = (event, _attachmentSideEffects) =>
     Effect.gen(function* () {
       switch (event.type) {
-        case "project.created":
+        case "project.created": {
+          const workbookId = event.payload.workbookId ?? null;
+          if (workbookId !== null && event.payload.groupName !== null) {
+            const existingWorkbook = yield* projectionWorkbookRepository.getById({
+              workbookId,
+            });
+            if (Option.isNone(existingWorkbook)) {
+              yield* projectionWorkbookRepository.upsert({
+                workbookId,
+                name: event.payload.groupName,
+                emoji: event.payload.groupEmoji ?? null,
+                createdAt: event.payload.createdAt,
+                updatedAt: event.payload.updatedAt,
+                deletedAt: null,
+              });
+            }
+          }
           yield* projectionProjectRepository.upsert({
             projectId: event.payload.projectId,
             title: event.payload.title,
+            emoji: event.payload.emoji,
+            color: event.payload.color ?? null,
+            workbookId,
+            groupName: event.payload.groupName,
+            groupEmoji: event.payload.groupEmoji ?? null,
             workspaceRoot: event.payload.workspaceRoot,
             defaultModel: event.payload.defaultModel,
             scripts: event.payload.scripts,
@@ -369,6 +444,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             deletedAt: null,
           });
           return;
+        }
 
         case "project.meta-updated": {
           const existingRow = yield* projectionProjectRepository.getById({
@@ -377,9 +453,47 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           if (Option.isNone(existingRow)) {
             return;
           }
+          const nextWorkbookId =
+            event.payload.workbookId !== undefined
+              ? (event.payload.workbookId ?? null)
+              : (existingRow.value.workbookId ?? null);
+          const nextGroupName =
+            event.payload.groupName !== undefined
+              ? event.payload.groupName
+              : existingRow.value.groupName;
+          const nextGroupEmoji =
+            event.payload.groupEmoji !== undefined
+              ? event.payload.groupEmoji
+              : existingRow.value.groupEmoji;
+          if (nextWorkbookId !== null && nextGroupName !== null) {
+            const existingWorkbook = yield* projectionWorkbookRepository.getById({
+              workbookId: nextWorkbookId,
+            });
+            if (Option.isNone(existingWorkbook)) {
+              yield* projectionWorkbookRepository.upsert({
+                workbookId: nextWorkbookId,
+                name: nextGroupName,
+                emoji: nextGroupEmoji ?? null,
+                createdAt: existingRow.value.createdAt,
+                updatedAt: event.payload.updatedAt,
+                deletedAt: null,
+              });
+            }
+          }
           yield* projectionProjectRepository.upsert({
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.emoji !== undefined ? { emoji: event.payload.emoji } : {}),
+            ...(event.payload.color !== undefined ? { color: event.payload.color } : {}),
+            ...(event.payload.workbookId !== undefined
+              ? { workbookId: event.payload.workbookId ?? null }
+              : {}),
+            ...(event.payload.groupName !== undefined
+              ? { groupName: event.payload.groupName }
+              : {}),
+            ...(event.payload.groupEmoji !== undefined
+              ? { groupEmoji: event.payload.groupEmoji }
+              : {}),
             ...(event.payload.workspaceRoot !== undefined
               ? { workspaceRoot: event.payload.workspaceRoot }
               : {}),
@@ -1119,6 +1233,10 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
 
   const projectors: ReadonlyArray<ProjectorDefinition> = [
     {
+      name: ORCHESTRATION_PROJECTOR_NAMES.workbooks,
+      apply: applyWorkbooksProjection,
+    },
+    {
       name: ORCHESTRATION_PROJECTOR_NAMES.projects,
       apply: applyProjectsProjection,
     },
@@ -1246,6 +1364,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   makeOrchestrationProjectionPipeline,
 ).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(ProjectionWorkbookRepositoryLive),
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),

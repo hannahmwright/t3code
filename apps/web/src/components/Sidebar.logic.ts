@@ -1,5 +1,5 @@
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
-import type { Thread } from "../types";
+import type { Project, Thread, Workbook } from "../types";
 import { cn } from "../lib/utils";
 import {
   findLatestProposedPlan,
@@ -9,12 +9,47 @@ import {
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type ThreadTraversalDirection = "previous" | "next";
 type SidebarProject = {
   id: string;
   name: string;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
+export interface SidebarProjectGroup {
+  key: string;
+  workbookId: Workbook["id"] | null;
+  name: string | null;
+  emoji: string | null;
+  projects: Project[];
+}
+export interface SidebarProjectGroupUpdate {
+  projectId: Project["id"];
+  patch: {
+    groupEmoji?: string | null;
+    groupName?: string | null;
+  };
+}
+
+export function normalizeWorkbookFields(input: { groupName: string; groupEmoji: string }): {
+  groupName: string | null;
+  groupEmoji: string | null;
+} {
+  const groupName = input.groupName.trim();
+  if (groupName.length === 0) {
+    return {
+      groupName: null,
+      groupEmoji: null,
+    };
+  }
+
+  const groupEmoji = input.groupEmoji.trim();
+  return {
+    groupName,
+    groupEmoji: groupEmoji.length > 0 ? groupEmoji : null,
+  };
+}
+
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
 
 export interface ThreadStatusPill {
@@ -228,6 +263,161 @@ export function getVisibleThreadsForProject(input: {
     hasHiddenThreads: true,
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+export function getVisibleSidebarThreadIds<TThreadId>(
+  renderedProjects: readonly {
+    shouldShowThreadPanel?: boolean;
+    renderedThreadIds: readonly TThreadId[];
+  }[],
+): TThreadId[] {
+  return renderedProjects.flatMap((renderedProject) =>
+    renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
+  );
+}
+
+export function resolveAdjacentThreadId<T>(input: {
+  threadIds: readonly T[];
+  currentThreadId: T | null;
+  direction: ThreadTraversalDirection;
+}): T | null {
+  const { currentThreadId, direction, threadIds } = input;
+
+  if (threadIds.length === 0) {
+    return null;
+  }
+
+  if (currentThreadId === null) {
+    return direction === "previous" ? (threadIds.at(-1) ?? null) : (threadIds[0] ?? null);
+  }
+
+  const currentIndex = threadIds.indexOf(currentThreadId);
+  if (currentIndex === -1) {
+    return null;
+  }
+
+  if (direction === "previous") {
+    return currentIndex > 0 ? (threadIds[currentIndex - 1] ?? null) : null;
+  }
+
+  return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
+}
+
+export function groupProjectsForSidebar(input: {
+  projects: readonly Project[];
+  workbooks?: readonly Workbook[];
+}): SidebarProjectGroup[] {
+  const projects = input.projects;
+  const workbooks = input.workbooks ?? [];
+  const groupedProjects: SidebarProjectGroup[] = [];
+  const groupedProjectIndexByWorkbookId = new Map<string, number>();
+  const workbookById = new Map(workbooks.map((workbook) => [workbook.id, workbook] as const));
+  const seenWorkbookIds = new Set<Workbook["id"]>();
+
+  for (const project of projects) {
+    const workbook = project.workbookId ? (workbookById.get(project.workbookId) ?? null) : null;
+    const groupName = workbook?.name ?? (project.groupName?.trim() || null);
+    const groupEmoji = workbook?.emoji ?? project.groupEmoji ?? null;
+    const workbookId = workbook?.id ?? project.workbookId ?? null;
+
+    if (groupName === null || workbookId === null) {
+      groupedProjects.push({
+        key: `project:${project.id}`,
+        workbookId: null,
+        name: null,
+        emoji: null,
+        projects: [project],
+      });
+      continue;
+    }
+
+    seenWorkbookIds.add(workbookId);
+    const existingGroupIndex = groupedProjectIndexByWorkbookId.get(workbookId);
+    if (existingGroupIndex === undefined) {
+      groupedProjectIndexByWorkbookId.set(workbookId, groupedProjects.length);
+      groupedProjects.push({
+        key: `group:${workbookId}`,
+        workbookId,
+        name: groupName,
+        emoji: groupEmoji,
+        projects: [project],
+      });
+      continue;
+    }
+
+    const existingGroup = groupedProjects[existingGroupIndex];
+    if (!existingGroup) {
+      continue;
+    }
+    existingGroup.projects.push(project);
+    if (existingGroup.emoji === null && groupEmoji) {
+      existingGroup.emoji = groupEmoji;
+    }
+  }
+
+  const emptyWorkbooks = workbooks
+    .filter((workbook) => !seenWorkbookIds.has(workbook.id))
+    .toSorted((left, right) => {
+      const leftTimestamp = Date.parse(left.createdAt ?? "");
+      const rightTimestamp = Date.parse(right.createdAt ?? "");
+      const leftValue = Number.isNaN(leftTimestamp) ? Number.POSITIVE_INFINITY : leftTimestamp;
+      const rightValue = Number.isNaN(rightTimestamp) ? Number.POSITIVE_INFINITY : rightTimestamp;
+      if (leftValue !== rightValue) {
+        return leftValue - rightValue;
+      }
+      return left.name.localeCompare(right.name);
+    })
+    .map((workbook) => ({
+      key: `group:${workbook.id}`,
+      workbookId: workbook.id,
+      name: workbook.name,
+      emoji: workbook.emoji,
+      projects: [],
+    }));
+
+  return [...groupedProjects, ...emptyWorkbooks];
+}
+
+export function buildProjectGroupUpdatePlan(input: {
+  projects: readonly Pick<Project, "groupEmoji" | "groupName" | "id">[];
+  originalGroupName: string | null;
+  nextGroupName: string;
+  nextGroupEmoji: string;
+  selectedProjectIds: readonly Project["id"][];
+}): SidebarProjectGroupUpdate[] {
+  const normalizedOriginalGroupName = input.originalGroupName?.trim() || null;
+  const normalizedNextGroupName = input.nextGroupName.trim();
+  const normalizedNextGroupEmoji = input.nextGroupEmoji.trim() || null;
+  const selectedProjectIds = new Set(input.selectedProjectIds);
+
+  return input.projects
+    .filter((project) => {
+      const currentGroupName = project.groupName?.trim() || null;
+      return (
+        selectedProjectIds.has(project.id) ||
+        (normalizedOriginalGroupName !== null && currentGroupName === normalizedOriginalGroupName)
+      );
+    })
+    .map((project) => {
+      const currentGroupName = project.groupName?.trim() || null;
+      const currentGroupEmoji = project.groupEmoji?.trim() || null;
+      const targetGroupName = selectedProjectIds.has(project.id) ? normalizedNextGroupName : null;
+      const targetGroupEmoji = selectedProjectIds.has(project.id) ? normalizedNextGroupEmoji : null;
+      const patch: SidebarProjectGroupUpdate["patch"] = {};
+
+      if (currentGroupName !== targetGroupName) {
+        patch.groupName = targetGroupName;
+      }
+      if (currentGroupEmoji !== targetGroupEmoji) {
+        patch.groupEmoji = targetGroupEmoji;
+      }
+
+      return {
+        projectId: project.id,
+        patch,
+      };
+    })
+    .filter(({ patch }) => Object.keys(patch).length > 0);
 }
 
 function toSortableTimestamp(iso: string | undefined): number | null {

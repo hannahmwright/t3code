@@ -46,6 +46,11 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type {
+  NotificationsDeletePushSubscriptionInput,
+  NotificationsGetConfigResult,
+  NotificationsUpsertPushSubscriptionInput,
+} from "./notifications";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -95,8 +100,16 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export interface DesktopEnvironmentBootstrap {
+  label: string;
+  httpBaseUrl: string | null;
+  wsBaseUrl: string | null;
+  bootstrapToken?: string;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  getLocalEnvironmentBootstrap?: () => DesktopEnvironmentBootstrap | null;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
@@ -161,6 +174,11 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+  };
+  notifications: {
+    getConfig: () => Promise<NotificationsGetConfigResult>;
+    upsertPushSubscription: (input: NotificationsUpsertPushSubscriptionInput) => Promise<void>;
+    deletePushSubscription: (input: NotificationsDeletePushSubscriptionInput) => Promise<void>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

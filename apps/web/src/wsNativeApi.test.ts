@@ -27,6 +27,8 @@ const showContextMenuFallbackMock =
   >();
 const channelListeners = new Map<string, Set<(message: WsPush) => void>>();
 const latestPushByChannel = new Map<string, WsPush>();
+const transportStateListeners = new Set<(state: string) => void>();
+let transportState = "connecting";
 const subscribeMock = vi.fn<
   (
     channel: string,
@@ -54,6 +56,18 @@ vi.mock("./wsTransport", () => {
     WsTransport: class MockWsTransport {
       request = requestMock;
       subscribe = subscribeMock;
+      subscribeState(listener: (state: string) => void, options?: { replayCurrent?: boolean }) {
+        transportStateListeners.add(listener);
+        if (options?.replayCurrent) {
+          listener(transportState);
+        }
+        return () => {
+          transportStateListeners.delete(listener);
+        };
+      }
+      getState() {
+        return transportState;
+      }
       getLatestPush(channel: string) {
         return latestPushByChannel.get(channel) ?? null;
       }
@@ -66,6 +80,13 @@ vi.mock("./contextMenuFallback", () => ({
 }));
 
 let nextPushSequence = 1;
+
+function emitTransportState(state: string): void {
+  transportState = state;
+  for (const listener of transportStateListeners) {
+    listener(state);
+  }
+}
 
 function emitPush<C extends WsPushChannel>(channel: C, data: WsPushData<C>): void {
   const listeners = channelListeners.get(channel);
@@ -109,6 +130,8 @@ beforeEach(() => {
   subscribeMock.mockClear();
   channelListeners.clear();
   latestPushByChannel.clear();
+  transportStateListeners.clear();
+  transportState = "connecting";
   nextPushSequence = 1;
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
@@ -233,6 +256,24 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("replays and forwards websocket transport state changes", async () => {
+    const { createWsNativeApi, onTransportStateChange } = await import("./wsNativeApi");
+
+    createWsNativeApi();
+    const listener = vi.fn();
+    onTransportStateChange(listener);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith("connecting");
+
+    emitTransportState("open");
+    emitTransportState("closed");
+
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(listener).toHaveBeenNthCalledWith(2, "open");
+    expect(listener).toHaveBeenNthCalledWith(3, "closed");
+  });
+
   it("forwards valid terminal and orchestration events", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
@@ -268,6 +309,10 @@ describe("wsNativeApi", () => {
       payload: {
         projectId: ProjectId.makeUnsafe("project-1"),
         title: "Project",
+        emoji: null,
+        color: null,
+        groupName: null,
+        groupEmoji: null,
         workspaceRoot: "/tmp/workspace",
         defaultModel: null,
         scripts: [],
@@ -339,6 +384,44 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards browser push notification requests to the websocket notifications methods", async () => {
+    requestMock.mockResolvedValue(undefined);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.notifications.getConfig();
+    await api.notifications.upsertPushSubscription({
+      subscription: {
+        endpoint: "https://push.example/subscription-1",
+        expirationTime: null,
+        keys: {
+          auth: "auth-token",
+          p256dh: "p256dh-token",
+        },
+      },
+      userAgent: "Safari",
+    });
+    await api.notifications.deletePushSubscription({
+      endpoint: "https://push.example/subscription-1",
+    });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.notificationsGetConfig);
+    expect(requestMock).toHaveBeenNthCalledWith(2, WS_METHODS.notificationsUpsertPushSubscription, {
+      subscription: {
+        endpoint: "https://push.example/subscription-1",
+        expirationTime: null,
+        keys: {
+          auth: "auth-token",
+          p256dh: "p256dh-token",
+        },
+      },
+      userAgent: "Safari",
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.notificationsDeletePushSubscription, {
+      endpoint: "https://push.example/subscription-1",
+    });
+  });
+
   it("uses no client timeout for git.runStackedAction", async () => {
     requestMock.mockResolvedValue({
       action: "commit",
@@ -372,6 +455,23 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
       threadId: "thread-1",
       toTurnCount: 1,
+    });
+  });
+
+  it("uses a short client timeout for orchestration snapshots so startup can retry quickly", async () => {
+    requestMock.mockResolvedValue({
+      snapshotSequence: 1,
+      updatedAt: "2026-02-24T00:00:00.000Z",
+      projects: [],
+      threads: [],
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.orchestration.getSnapshot();
+
+    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.getSnapshot, undefined, {
+      timeoutMs: 8_000,
     });
   });
 

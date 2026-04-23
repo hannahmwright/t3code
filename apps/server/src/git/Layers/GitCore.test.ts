@@ -188,6 +188,38 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("returns isRepo: false when the cwd no longer exists", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const missing = path.join(tmp, "missing-worktree");
+        const result = yield* (yield* GitCore).listBranches({ cwd: missing });
+        expect(result.isRepo).toBe(false);
+        expect(result.hasOriginRemote).toBe(false);
+        expect(result.branches).toEqual([]);
+      }),
+    );
+
+    it.effect("statusDetails returns an empty status when the cwd no longer exists", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const missing = path.join(tmp, "missing-worktree");
+        const details = yield* (yield* GitCore).statusDetails(missing);
+        expect(details).toEqual({
+          branch: null,
+          upstreamRef: null,
+          hasWorkingTreeChanges: false,
+          workingTree: {
+            files: [],
+            insertions: 0,
+            deletions: 0,
+          },
+          hasUpstream: false,
+          aheadCount: 0,
+          behindCount: 0,
+        });
+      }),
+    );
+
     it.effect("returns the current branch with current: true", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

@@ -1,8 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, Undo2Icon, XIcon } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
-import { type ProviderKind, DEFAULT_GIT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
+import {
+  type DesktopUpdateState,
+  type ProviderKind,
+  DEFAULT_GIT_TEXT_GENERATION_MODEL,
+} from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   getAppModelOptions,
@@ -14,6 +18,7 @@ import {
 } from "../appSettings";
 import { APP_VERSION } from "../branding";
 import { Button } from "../components/ui/button";
+import { toastManager } from "../components/ui/toast";
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
 import {
@@ -33,6 +38,16 @@ import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { cn } from "../lib/utils";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
+import { resolvePrimaryEnvironmentTarget } from "../primaryEnvironment";
+import {
+  buildPairingUrl,
+  createServerPairingCredential,
+  readEnvironmentBootstrapCredential,
+} from "../serverAuth";
+import { useServerAuth } from "../serverAuthContext";
+import { useBrowserNotificationPermission } from "../useBrowserNotificationPermission";
+import { onTransportStateChange } from "../wsNativeApi";
+import type { TransportState } from "../wsTransport";
 
 const THEME_OPTIONS = [
   {
@@ -185,12 +200,40 @@ function SettingResetButton({ label, onClick }: { label: string; onClick: () => 
   );
 }
 
+function maskDiagnosticUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    for (const param of ["token", "pairingToken"]) {
+      if (url.searchParams.has(param)) {
+        url.searchParams.set(param, "***");
+      }
+    }
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function renderDiagnosticValue(value: string | null | undefined): string {
+  if (!value) {
+    return "Unavailable";
+  }
+  return value;
+}
+
 function SettingsRouteView() {
   const { theme, setTheme } = useTheme();
   const { settings, defaults, updateSettings, resetSettings } = useAppSettings();
+  const {
+    permission: notificationPermission,
+    supported: notificationsSupported,
+    requestPermission,
+  } = useBrowserNotificationPermission();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [isRequestingNotificationPermission, setIsRequestingNotificationPermission] =
+    useState(false);
   const [openInstallProviders, setOpenInstallProviders] = useState<Record<ProviderKind, boolean>>({
     codex: Boolean(settings.codexBinaryPath || settings.codexHomePath),
     claudeAgent: Boolean(settings.claudeBinaryPath),
@@ -207,12 +250,21 @@ function SettingsRouteView() {
     Partial<Record<ProviderKind, string | null>>
   >({});
   const [showAllCustomModels, setShowAllCustomModels] = useState(false);
+  const [isCreatingPairingLink, setIsCreatingPairingLink] = useState(false);
+  const [latestPairingLinkUrl, setLatestPairingLinkUrl] = useState<string | null>(null);
+  const [latestPairingLinkExpiresAt, setLatestPairingLinkExpiresAt] = useState<string | null>(null);
+  const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [transportState, setTransportState] = useState<TransportState | null>(null);
+  const serverAuth = useServerAuth();
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const claudeBinaryPath = settings.claudeBinaryPath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+  const primaryEnvironmentTarget = resolvePrimaryEnvironmentTarget();
+  const bootstrapCredentialPresent = readEnvironmentBootstrapCredential() !== null;
+  const serverDiagnostics = serverConfigQuery.data?.diagnostics ?? null;
 
   const gitTextGenerationModelOptions = getAppModelOptions(
     "codex",
@@ -249,12 +301,19 @@ function SettingsRouteView() {
     settings.claudeBinaryPath !== defaults.claudeBinaryPath ||
     settings.codexBinaryPath !== defaults.codexBinaryPath ||
     settings.codexHomePath !== defaults.codexHomePath;
+  const canCreatePairingLinks =
+    serverAuth.status === "authenticated" &&
+    serverAuth.session.auth.enabled &&
+    serverAuth.session.role === "owner";
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
     ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
     ...(settings.diffWordWrap !== defaults.diffWordWrap ? ["Diff line wrapping"] : []),
     ...(settings.enableAssistantStreaming !== defaults.enableAssistantStreaming
       ? ["Assistant output"]
+      : []),
+    ...(settings.enableTurnCompletionNotifications !== defaults.enableTurnCompletionNotifications
+      ? ["Turn completion notifications"]
       : []),
     ...(settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? ["New thread mode"] : []),
     ...(settings.confirmThreadDelete !== defaults.confirmThreadDelete
@@ -354,6 +413,121 @@ function SettingsRouteView() {
     [settings, updateSettings],
   );
 
+  const notificationStatus = !notificationsSupported
+    ? "This browser doesn't support notifications."
+    : isRequestingNotificationPermission
+      ? "Requesting browser permission..."
+      : notificationPermission === "granted"
+        ? settings.enableTurnCompletionNotifications
+          ? "Notifications are on."
+          : "Permission is granted, but notifications are off."
+        : notificationPermission === "denied"
+          ? "Notifications are blocked for this app in your browser settings."
+          : settings.enableTurnCompletionNotifications
+            ? "Ready to ask for permission."
+            : "Turn this on to ask the browser for notification permission.";
+
+  const handleNotificationToggle = useCallback(
+    async (checked: boolean) => {
+      if (!checked) {
+        updateSettings({ enableTurnCompletionNotifications: false });
+        return;
+      }
+
+      if (!notificationsSupported) {
+        toastManager.add({
+          type: "warning",
+          title: "Notifications unavailable",
+          description: "This browser doesn't support notifications.",
+        });
+        return;
+      }
+
+      if (notificationPermission === "granted") {
+        updateSettings({ enableTurnCompletionNotifications: true });
+        return;
+      }
+
+      if (notificationPermission === "denied") {
+        updateSettings({ enableTurnCompletionNotifications: false });
+        toastManager.add({
+          type: "warning",
+          title: "Notifications blocked",
+          description: "Allow notifications in your browser settings, then try again here.",
+        });
+        return;
+      }
+
+      setIsRequestingNotificationPermission(true);
+      try {
+        const nextPermission = await requestPermission();
+        if (nextPermission === "granted") {
+          updateSettings({ enableTurnCompletionNotifications: true });
+          toastManager.add({
+            type: "success",
+            title: "Notifications enabled",
+            description: "T3 Code will alert you when a background turn finishes.",
+          });
+          return;
+        }
+
+        updateSettings({ enableTurnCompletionNotifications: false });
+        if (nextPermission === "denied") {
+          toastManager.add({
+            type: "warning",
+            title: "Notifications blocked",
+            description: "Allow notifications in your browser settings, then try again here.",
+          });
+        }
+      } catch (error) {
+        updateSettings({ enableTurnCompletionNotifications: false });
+        toastManager.add({
+          type: "error",
+          title: "Notifications unavailable",
+          description: error instanceof Error ? error.message : "Unable to enable notifications.",
+        });
+      } finally {
+        setIsRequestingNotificationPermission(false);
+      }
+    },
+    [notificationPermission, notificationsSupported, requestPermission, updateSettings],
+  );
+
+  useEffect(() => onTransportStateChange(setTransportState), []);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (
+      !bridge ||
+      typeof bridge.getUpdateState !== "function" ||
+      typeof bridge.onUpdateState !== "function"
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    let receivedSubscriptionUpdate = false;
+    const unsubscribe = bridge.onUpdateState((nextState) => {
+      if (disposed) return;
+      receivedSubscriptionUpdate = true;
+      setDesktopUpdateState(nextState);
+    });
+
+    void bridge
+      .getUpdateState()
+      .then((nextState) => {
+        if (disposed || receivedSubscriptionUpdate) return;
+        setDesktopUpdateState(nextState);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
   async function restoreDefaults() {
     if (changedSettingLabels.length === 0) return;
 
@@ -423,6 +597,67 @@ function SettingsRouteView() {
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+            {canCreatePairingLinks ? (
+              <SettingsSection title="Connections">
+                <SettingsRow
+                  title="Pair another device"
+                  description="Create a one-time link for your phone or another browser."
+                  control={
+                    <Button
+                      size="sm"
+                      disabled={isCreatingPairingLink}
+                      onClick={() => {
+                        setIsCreatingPairingLink(true);
+                        void createServerPairingCredential()
+                          .then(async (credential) => {
+                            const pairingUrl = buildPairingUrl(credential.credential);
+                            setLatestPairingLinkUrl(pairingUrl);
+                            setLatestPairingLinkExpiresAt(credential.expiresAt);
+                            try {
+                              await navigator.clipboard.writeText(pairingUrl);
+                              toastManager.add({
+                                type: "success",
+                                title: "Pairing link copied",
+                                description: "Open it on the device you want to pair.",
+                              });
+                            } catch {
+                              toastManager.add({
+                                type: "success",
+                                title: "Pairing link created",
+                                description: "Open the link below on the device you want to pair.",
+                              });
+                            }
+                          })
+                          .catch((error) => {
+                            toastManager.add({
+                              type: "error",
+                              title: "Couldn’t create pairing link",
+                              description:
+                                error instanceof Error ? error.message : "Try again in a moment.",
+                            });
+                          })
+                          .finally(() => {
+                            setIsCreatingPairingLink(false);
+                          });
+                      }}
+                    >
+                      {isCreatingPairingLink ? "Creating…" : "Create Link"}
+                    </Button>
+                  }
+                >
+                  {latestPairingLinkUrl ? (
+                    <div className="mt-3 space-y-2">
+                      <Input readOnly value={latestPairingLinkUrl} />
+                      {latestPairingLinkExpiresAt ? (
+                        <p className="text-xs text-muted-foreground">
+                          Expires {new Date(latestPairingLinkExpiresAt).toLocaleString()}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </SettingsRow>
+              </SettingsSection>
+            ) : null}
             <SettingsSection title="General">
               <SettingsRow
                 title="Theme"
@@ -553,6 +788,36 @@ function SettingsRouteView() {
                       })
                     }
                     aria-label="Stream assistant messages"
+                  />
+                }
+              />
+
+              <SettingsRow
+                title="Turn completion notifications"
+                description="Get an alert when a turn finishes while T3 Code is in the background."
+                status={notificationStatus}
+                resetAction={
+                  settings.enableTurnCompletionNotifications !==
+                  defaults.enableTurnCompletionNotifications ? (
+                    <SettingResetButton
+                      label="turn completion notifications"
+                      onClick={() =>
+                        updateSettings({
+                          enableTurnCompletionNotifications:
+                            defaults.enableTurnCompletionNotifications,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Switch
+                    checked={settings.enableTurnCompletionNotifications}
+                    disabled={isRequestingNotificationPermission || !notificationsSupported}
+                    onCheckedChange={(checked) => {
+                      void handleNotificationToggle(Boolean(checked));
+                    }}
+                    aria-label="Turn completion notifications"
                   />
                 }
               />
@@ -802,6 +1067,109 @@ function SettingsRouteView() {
               </SettingsRow>
             </SettingsSection>
 
+            <SettingsSection title="Diagnostics">
+              <SettingsRow
+                title="Build"
+                description="Installed app version and runtime architecture."
+                status={
+                  <div className="space-y-1">
+                    <span className="block font-mono text-[11px] text-foreground">
+                      App {APP_VERSION}
+                    </span>
+                    {desktopUpdateState ? (
+                      <>
+                        <span className="block">
+                          Desktop {desktopUpdateState.currentVersion} · {desktopUpdateState.appArch}{" "}
+                          on {desktopUpdateState.hostArch}
+                        </span>
+                        <span className="block">
+                          Update state {desktopUpdateState.status}
+                          {desktopUpdateState.availableVersion
+                            ? ` · available ${desktopUpdateState.availableVersion}`
+                            : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="block">
+                        {isElectron ? "Reading desktop runtime..." : "Browser session"}
+                      </span>
+                    )}
+                  </div>
+                }
+                control={
+                  <code className="text-xs font-medium text-muted-foreground">
+                    {!isElectron
+                      ? "Browser"
+                      : !desktopUpdateState
+                        ? "Pending"
+                        : desktopUpdateState.runningUnderArm64Translation
+                          ? "Rosetta"
+                          : "Native"}
+                  </code>
+                }
+              />
+
+              <SettingsRow
+                title="Connection"
+                description="Resolved frontend target and live websocket state."
+                status={
+                  <div className="space-y-1">
+                    <span className="block">Source {primaryEnvironmentTarget.source}</span>
+                    <span className="block break-all font-mono text-[11px] text-foreground">
+                      HTTP {maskDiagnosticUrl(primaryEnvironmentTarget.httpBaseUrl)}
+                    </span>
+                    <span className="block break-all font-mono text-[11px] text-foreground">
+                      WS {maskDiagnosticUrl(primaryEnvironmentTarget.wsBaseUrl)}
+                    </span>
+                    <span className="block">
+                      Bootstrap credential {bootstrapCredentialPresent ? "present" : "missing"}
+                    </span>
+                  </div>
+                }
+                control={
+                  <code className="text-xs font-medium text-muted-foreground">
+                    {transportState ?? "starting"}
+                  </code>
+                }
+              />
+
+              <SettingsRow
+                title="Server"
+                description="Backend runtime and persisted state paths."
+                status={
+                  serverDiagnostics ? (
+                    <div className="space-y-1">
+                      <span className="block">
+                        {serverDiagnostics.mode} · {serverDiagnostics.host ?? "127.0.0.1"}:
+                        {serverDiagnostics.port} · auth{" "}
+                        {serverDiagnostics.authEnabled ? "enabled" : "disabled"}
+                      </span>
+                      <span className="block break-all font-mono text-[11px] text-foreground">
+                        Base {serverDiagnostics.baseDir}
+                      </span>
+                      <span className="block break-all font-mono text-[11px] text-foreground">
+                        State {serverDiagnostics.stateDir}
+                      </span>
+                      <span className="block break-all font-mono text-[11px] text-foreground">
+                        Static {renderDiagnosticValue(serverDiagnostics.staticDir)}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="block">
+                      {serverConfigQuery.isPending
+                        ? "Reading backend diagnostics..."
+                        : "Backend diagnostics unavailable."}
+                    </span>
+                  )
+                }
+                control={
+                  <code className="text-xs font-medium text-muted-foreground">
+                    {serverDiagnostics ? `${serverDiagnostics.port}` : "pending"}
+                  </code>
+                }
+              />
+            </SettingsSection>
+
             <SettingsSection title="Advanced">
               <SettingsRow
                 title="Provider installs"
@@ -966,14 +1334,6 @@ function SettingsRouteView() {
                   >
                     {isOpeningKeybindings ? "Opening..." : "Open file"}
                   </Button>
-                }
-              />
-
-              <SettingsRow
-                title="Version"
-                description="Current application version."
-                control={
-                  <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
                 }
               />
             </SettingsSection>

@@ -6,6 +6,7 @@ import type {
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
+  WorkbookId,
   TurnId,
   MessageId,
   CheckpointRef,
@@ -43,6 +44,7 @@ export interface ChatMessage {
   id: MessageId;
   role: "user" | "assistant" | "system";
   text: string;
+  turnId?: TurnId | null;
   attachments?: ChatAttachment[];
   createdAt: string;
   completedAt?: string | undefined;
@@ -79,12 +81,25 @@ export interface TurnDiffSummary {
 export interface Project {
   id: ProjectId;
   name: string;
+  emoji: string | null;
+  color: string | null;
+  workbookId?: WorkbookId | null;
+  groupName: string | null;
+  groupEmoji: string | null;
   cwd: string;
   model: string;
   expanded: boolean;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
+}
+
+export interface Workbook {
+  id: WorkbookId;
+  name: string;
+  emoji: string | null;
+  createdAt?: string | undefined;
+  updatedAt?: string | undefined;
 }
 
 export interface Thread {
@@ -113,6 +128,7 @@ export interface ThreadSession {
   provider: ProviderKind;
   status: SessionPhase | "error" | "closed";
   activeTurnId?: TurnId | undefined;
+  canInterrupt?: boolean | undefined;
   createdAt: string;
   updatedAt: string;
   lastError?: string;

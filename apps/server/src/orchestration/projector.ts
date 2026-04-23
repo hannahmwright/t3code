@@ -1,4 +1,9 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  OrchestrationWorkbook,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -9,6 +14,9 @@ import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
+  WorkbookCreatedPayload,
+  WorkbookDeletedPayload,
+  WorkbookMetaUpdatedPayload,
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
   ProjectDeletedPayload,
@@ -19,6 +27,8 @@ import {
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
+  ThreadTurnInterruptRequestedPayload,
+  ThreadTurnStartRequestedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
@@ -41,6 +51,73 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function upsertWorkbook(
+  workbooks: ReadonlyArray<OrchestrationWorkbook>,
+  workbook: OrchestrationWorkbook,
+): OrchestrationWorkbook[] {
+  const existing = workbooks.find((entry) => entry.id === workbook.id);
+  if (!existing) {
+    return [...workbooks, workbook];
+  }
+  return workbooks.map((entry) => (entry.id === workbook.id ? workbook : entry));
+}
+
+function resolveWorkbookMetadata(
+  workbooks: ReadonlyArray<OrchestrationWorkbook>,
+  input: {
+    workbookId: OrchestrationReadModel["projects"][number]["workbookId"];
+    groupName: string | null;
+    groupEmoji: string | null;
+  },
+): {
+  groupName: string | null;
+  groupEmoji: string | null;
+} {
+  if (input.workbookId === null) {
+    return {
+      groupName: input.groupName,
+      groupEmoji: input.groupEmoji,
+    };
+  }
+  const workbook = workbooks.find(
+    (entry) => entry.id === input.workbookId && entry.deletedAt === null,
+  );
+  if (!workbook) {
+    return {
+      groupName: input.groupName,
+      groupEmoji: input.groupEmoji,
+    };
+  }
+  return {
+    groupName: workbook.name,
+    groupEmoji: workbook.emoji,
+  };
+}
+
+function deriveSessionCanInterrupt(input: {
+  session: OrchestrationSession;
+  latestTurn: OrchestrationThread["latestTurn"];
+  previousCanInterrupt?: boolean;
+}): boolean {
+  const previousCanInterrupt = input.previousCanInterrupt ?? false;
+  const latestTurnSettled =
+    input.latestTurn?.completedAt !== null && input.latestTurn?.completedAt !== undefined;
+
+  switch (input.session.status) {
+    case "running":
+      return (
+        input.session.activeTurnId !== null ||
+        previousCanInterrupt ||
+        input.latestTurn?.completedAt === null
+      );
+    case "starting":
+    case "ready":
+      return previousCanInterrupt && !latestTurnSettled;
+    default:
+      return false;
+  }
 }
 
 function decodeForEvent<A>(
@@ -156,6 +233,7 @@ function compareThreadActivities(
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
+    workbooks: [],
     projects: [],
     threads: [],
     updatedAt: nowIso,
@@ -168,18 +246,109 @@ export function projectEvent(
 ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
   const nextBase: OrchestrationReadModel = {
     ...model,
+    workbooks: model.workbooks ?? [],
     snapshotSequence: event.sequence,
     updatedAt: event.occurredAt,
   };
+  const currentWorkbooks = nextBase.workbooks ?? [];
 
   switch (event.type) {
+    case "workbook.created":
+      return decodeForEvent(WorkbookCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const nextWorkbook = {
+            id: payload.workbookId,
+            name: payload.name,
+            emoji: payload.emoji,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            deletedAt: null,
+          } satisfies OrchestrationWorkbook;
+
+          return {
+            ...nextBase,
+            workbooks: upsertWorkbook(currentWorkbooks, nextWorkbook),
+          };
+        }),
+      );
+
+    case "workbook.meta-updated":
+      return decodeForEvent(WorkbookMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workbooks: currentWorkbooks.map((workbook) =>
+            workbook.id === payload.workbookId
+              ? {
+                  ...workbook,
+                  ...(payload.name !== undefined ? { name: payload.name } : {}),
+                  ...(payload.emoji !== undefined ? { emoji: payload.emoji } : {}),
+                  updatedAt: payload.updatedAt,
+                }
+              : workbook,
+          ),
+          projects: nextBase.projects.map((project) => {
+            if (project.workbookId !== payload.workbookId) {
+              return project;
+            }
+            const nextGroupName = payload.name ?? project.groupName;
+            const nextGroupEmoji = payload.emoji !== undefined ? payload.emoji : project.groupEmoji;
+            return {
+              ...project,
+              groupName: nextGroupName,
+              groupEmoji: nextGroupEmoji,
+              updatedAt: payload.updatedAt,
+            };
+          }),
+        })),
+      );
+
+    case "workbook.deleted":
+      return decodeForEvent(WorkbookDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workbooks: currentWorkbooks.map((workbook) =>
+            workbook.id === payload.workbookId
+              ? {
+                  ...workbook,
+                  deletedAt: payload.deletedAt,
+                  updatedAt: payload.deletedAt,
+                }
+              : workbook,
+          ),
+        })),
+      );
+
     case "project.created":
       return decodeForEvent(ProjectCreatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {
+          const workbookId = payload.workbookId ?? null;
           const existing = nextBase.projects.find((entry) => entry.id === payload.projectId);
+          const nextWorkbooks =
+            workbookId !== null &&
+            !currentWorkbooks.some((entry) => entry.id === workbookId) &&
+            payload.groupName !== null
+              ? upsertWorkbook(currentWorkbooks, {
+                  id: workbookId,
+                  name: payload.groupName,
+                  emoji: payload.groupEmoji ?? null,
+                  createdAt: payload.createdAt,
+                  updatedAt: payload.updatedAt,
+                  deletedAt: null,
+                })
+              : [...currentWorkbooks];
+          const workbookMetadata = resolveWorkbookMetadata(nextWorkbooks, {
+            workbookId,
+            groupName: payload.groupName,
+            groupEmoji: payload.groupEmoji ?? null,
+          });
           const nextProject = {
             id: payload.projectId,
             title: payload.title,
+            emoji: payload.emoji,
+            color: payload.color ?? null,
+            workbookId,
+            groupName: workbookMetadata.groupName,
+            groupEmoji: workbookMetadata.groupEmoji,
             workspaceRoot: payload.workspaceRoot,
             defaultModel: payload.defaultModel,
             scripts: payload.scripts,
@@ -190,6 +359,7 @@ export function projectEvent(
 
           return {
             ...nextBase,
+            workbooks: nextWorkbooks,
             projects: existing
               ? nextBase.projects.map((entry) =>
                   entry.id === payload.projectId ? nextProject : entry,
@@ -201,25 +371,69 @@ export function projectEvent(
 
     case "project.meta-updated":
       return decodeForEvent(ProjectMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          projects: nextBase.projects.map((project) =>
-            project.id === payload.projectId
-              ? {
-                  ...project,
-                  ...(payload.title !== undefined ? { title: payload.title } : {}),
-                  ...(payload.workspaceRoot !== undefined
-                    ? { workspaceRoot: payload.workspaceRoot }
-                    : {}),
-                  ...(payload.defaultModel !== undefined
-                    ? { defaultModel: payload.defaultModel }
-                    : {}),
-                  ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+        Effect.map((payload) => {
+          const previousProject = nextBase.projects.find(
+            (project) => project.id === payload.projectId,
+          );
+          const nextWorkbookId =
+            payload.workbookId !== undefined
+              ? (payload.workbookId ?? null)
+              : (previousProject?.workbookId ?? null);
+          const nextGroupName =
+            payload.groupName !== undefined
+              ? payload.groupName
+              : (previousProject?.groupName ?? null);
+          const nextGroupEmoji =
+            payload.groupEmoji !== undefined
+              ? payload.groupEmoji
+              : (previousProject?.groupEmoji ?? null);
+
+          const nextWorkbooks =
+            nextWorkbookId !== null &&
+            !currentWorkbooks.some((entry) => entry.id === nextWorkbookId) &&
+            nextGroupName !== null
+              ? upsertWorkbook(currentWorkbooks, {
+                  id: nextWorkbookId,
+                  name: nextGroupName,
+                  emoji: nextGroupEmoji ?? null,
+                  createdAt: previousProject?.createdAt ?? payload.updatedAt,
                   updatedAt: payload.updatedAt,
-                }
-              : project,
-          ),
-        })),
+                  deletedAt: null,
+                })
+              : [...currentWorkbooks];
+          const workbookMetadata = resolveWorkbookMetadata(nextWorkbooks, {
+            workbookId: nextWorkbookId,
+            groupName: nextGroupName,
+            groupEmoji: nextGroupEmoji,
+          });
+
+          return {
+            ...nextBase,
+            workbooks: nextWorkbooks,
+            projects: nextBase.projects.map((project) =>
+              project.id === payload.projectId
+                ? {
+                    ...project,
+                    ...(payload.title !== undefined ? { title: payload.title } : {}),
+                    ...(payload.emoji !== undefined ? { emoji: payload.emoji } : {}),
+                    ...(payload.color !== undefined ? { color: payload.color } : {}),
+                    ...(payload.workbookId !== undefined ? { workbookId: payload.workbookId } : {}),
+                    groupName: nextWorkbookId === null ? nextGroupName : workbookMetadata.groupName,
+                    groupEmoji:
+                      nextWorkbookId === null ? nextGroupEmoji : workbookMetadata.groupEmoji,
+                    ...(payload.workspaceRoot !== undefined
+                      ? { workspaceRoot: payload.workspaceRoot }
+                      : {}),
+                    ...(payload.defaultModel !== undefined
+                      ? { defaultModel: payload.defaultModel }
+                      : {}),
+                    ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                    updatedAt: payload.updatedAt,
+                  }
+                : project,
+            ),
+          };
+        }),
       );
 
     case "project.deleted":
@@ -410,27 +624,35 @@ export function projectEvent(
           event.type,
           "session",
         );
+        const nextSession = {
+          ...session,
+          canInterrupt: deriveSessionCanInterrupt({
+            session,
+            latestTurn: thread.latestTurn,
+            previousCanInterrupt: session.canInterrupt || (thread.session?.canInterrupt ?? false),
+          }),
+        } satisfies OrchestrationSession;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            session,
+            session: nextSession,
             latestTurn:
-              session.status === "running" && session.activeTurnId !== null
+              nextSession.status === "running" && nextSession.activeTurnId !== null
                 ? {
-                    turnId: session.activeTurnId,
+                    turnId: nextSession.activeTurnId,
                     state: "running",
                     requestedAt:
-                      thread.latestTurn?.turnId === session.activeTurnId
+                      thread.latestTurn?.turnId === nextSession.activeTurnId
                         ? thread.latestTurn.requestedAt
-                        : session.updatedAt,
+                        : nextSession.updatedAt,
                     startedAt:
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? (thread.latestTurn.startedAt ?? session.updatedAt)
-                        : session.updatedAt,
+                      thread.latestTurn?.turnId === nextSession.activeTurnId
+                        ? (thread.latestTurn.startedAt ?? nextSession.updatedAt)
+                        : nextSession.updatedAt,
                     completedAt: null,
                     assistantMessageId:
-                      thread.latestTurn?.turnId === session.activeTurnId
+                      thread.latestTurn?.turnId === nextSession.activeTurnId
                         ? thread.latestTurn.assistantMessageId
                         : null,
                   }
@@ -439,6 +661,62 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (
+            !thread?.session ||
+            thread.session.status === "stopped" ||
+            thread.session.status === "error"
+          ) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              session: {
+                ...thread.session,
+                canInterrupt: true,
+                updatedAt: event.occurredAt,
+              },
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.turn-interrupt-requested":
+      return decodeForEvent(
+        ThreadTurnInterruptRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread?.session) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              session: {
+                ...thread.session,
+                canInterrupt: false,
+                updatedAt: event.occurredAt,
+              },
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {
@@ -520,6 +798,15 @@ export function projectEvent(
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(thread.session
+              ? {
+                  session: {
+                    ...thread.session,
+                    canInterrupt: false,
+                    updatedAt: event.occurredAt,
+                  },
+                }
+              : {}),
             checkpoints,
             latestTurn: {
               turnId: payload.turnId,

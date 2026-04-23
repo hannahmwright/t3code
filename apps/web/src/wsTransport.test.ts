@@ -1,4 +1,4 @@
-import { WS_CHANNELS } from "@t3tools/contracts";
+import { type DesktopBridge, WS_CHANNELS } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WsTransport } from "./wsTransport";
@@ -16,9 +16,11 @@ class MockWebSocket {
 
   readyState = MockWebSocket.CONNECTING;
   readonly sent: string[] = [];
+  readonly url: string;
   private readonly listeners = new Map<WsEventType, Set<WsListener>>();
 
-  constructor(_url: string) {
+  constructor(url: string) {
+    this.url = url;
     sockets.push(this);
   }
 
@@ -71,20 +73,46 @@ beforeEach(() => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
-      location: { hostname: "localhost", port: "3020" },
-      desktopBridge: undefined,
+      location: {
+        protocol: "http:",
+        origin: "http://localhost:3020",
+        host: "localhost:3020",
+        hostname: "localhost",
+        port: "3020",
+      },
     },
   });
+  Reflect.deleteProperty(window, "desktopBridge");
 
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   globalThis.WebSocket = originalWebSocket;
   vi.restoreAllMocks();
 });
 
 describe("WsTransport", () => {
+  it("prefers a configured primary environment over the desktop bridge default", () => {
+    const env = import.meta.env as Record<string, string | undefined>;
+    const previousWsUrl = env.VITE_WS_URL;
+    env.VITE_WS_URL = "wss://shared.example.com/?token=abc123";
+    window.desktopBridge = {
+      getWsUrl: () => "ws://127.0.0.1:9000",
+    } as DesktopBridge;
+
+    try {
+      const transport = new WsTransport();
+      const socket = getSocket();
+      expect(socket.url).toBe("wss://shared.example.com/?token=abc123");
+      transport.dispose();
+    } finally {
+      env.VITE_WS_URL = previousWsUrl;
+      Reflect.deleteProperty(window, "desktopBridge");
+    }
+  });
+
   it("routes valid push envelopes to channel listeners", () => {
     const transport = new WsTransport("ws://localhost:3020");
     const socket = getSocket();
@@ -251,6 +279,44 @@ describe("WsTransport", () => {
     socket.close();
 
     await expect(requestPromise).rejects.toThrow("WebSocket connection closed.");
+    transport.dispose();
+  });
+
+  it("replays the current transport state to late state subscribers", () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+    const listener = vi.fn();
+
+    transport.subscribeState(listener, { replayCurrent: true });
+    expect(listener).toHaveBeenNthCalledWith(1, "connecting");
+
+    socket.open();
+
+    expect(listener).toHaveBeenNthCalledWith(2, "open");
+    transport.dispose();
+  });
+
+  it("ignores stale close events after a newer socket reconnects", () => {
+    vi.useFakeTimers();
+
+    const transport = new WsTransport("ws://localhost:3020");
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    firstSocket.close();
+    vi.advanceTimersByTime(500);
+
+    const secondSocket = getSocket();
+    expect(secondSocket).not.toBe(firstSocket);
+    secondSocket.open();
+    expect(transport.getState()).toBe("open");
+
+    firstSocket.close();
+    expect(transport.getState()).toBe("open");
+
+    vi.advanceTimersByTime(10_000);
+    expect(sockets).toHaveLength(2);
+
     transport.dispose();
   });
 });

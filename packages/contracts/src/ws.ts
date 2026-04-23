@@ -35,6 +35,10 @@ import {
   TerminalWriteInput,
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
+import {
+  NotificationsDeletePushSubscriptionInput,
+  NotificationsUpsertPushSubscriptionInput,
+} from "./notifications";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload } from "./server";
@@ -76,6 +80,11 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+
+  // Notifications
+  notificationsGetConfig: "notifications.getConfig",
+  notificationsUpsertPushSubscription: "notifications.upsertPushSubscription",
+  notificationsDeletePushSubscription: "notifications.deletePushSubscription",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -141,6 +150,17 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+
+  // Notifications
+  tagRequestBody(WS_METHODS.notificationsGetConfig, Schema.Struct({})),
+  tagRequestBody(
+    WS_METHODS.notificationsUpsertPushSubscription,
+    NotificationsUpsertPushSubscriptionInput,
+  ),
+  tagRequestBody(
+    WS_METHODS.notificationsDeletePushSubscription,
+    NotificationsDeletePushSubscriptionInput,
+  ),
 ]);
 
 export const WebSocketRequest = Schema.Struct({
