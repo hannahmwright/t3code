@@ -57,6 +57,8 @@ mise install
 bun install .
 ```
 
+Local build notes, including the Node 22 PATH requirement for native tooling, live in [docs/local-build.md](./docs/local-build.md).
+
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 
 Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
