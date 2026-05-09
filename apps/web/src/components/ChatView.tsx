@@ -40,6 +40,7 @@ import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
+  parseComposerGoalSlashCommand,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import {
@@ -56,6 +57,7 @@ import {
   hasActionableProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
+  formatDuration,
   formatElapsed,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
@@ -176,6 +178,26 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
+
+function formatGoalStatus(status: NonNullable<Thread["goal"]>["status"]): string {
+  if (status === "budgetLimited") return "budget limited";
+  return status;
+}
+
+function formatGoalUsage(goal: NonNullable<Thread["goal"]>): string | null {
+  const parts: string[] = [];
+  if (goal.tokensUsed !== undefined) {
+    parts.push(
+      goal.tokenBudget !== undefined && goal.tokenBudget !== null
+        ? `${goal.tokensUsed.toLocaleString()} / ${goal.tokenBudget.toLocaleString()} tokens`
+        : `${goal.tokensUsed.toLocaleString()} tokens`,
+    );
+  }
+  if (goal.timeUsedSeconds !== undefined) {
+    parts.push(formatDuration(goal.timeUsedSeconds * 1000));
+  }
+  return parts.length > 0 ? parts.join(" / ") : null;
+}
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
@@ -2381,6 +2403,64 @@ export default function ChatView(props: ChatViewProps) {
       composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
+    const goalSlashCommand =
+      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+        ? parseComposerGoalSlashCommand(trimmed)
+        : null;
+    if (
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      /^\/goal(?:\s|$)/i.test(trimmed) &&
+      !goalSlashCommand
+    ) {
+      toastManager.add({
+        type: "warning",
+        title: "Goal command not supported",
+        description: "Use /goal, /goal clear, or /goal followed by an objective.",
+      });
+      return;
+    }
+    if (goalSlashCommand) {
+      if (!activeProject) return;
+      const api = readEnvironmentApi(environmentId);
+      if (!api) return;
+      const createdAt = new Date().toISOString();
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      if (goalSlashCommand.action === "show") {
+        await api.orchestration.dispatchCommand({
+          type: "thread.goal.get",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          createdAt,
+        });
+        const goal = activeThread.goal;
+        toastManager.add({
+          type: "info",
+          title: goal ? `Goal: ${formatGoalStatus(goal.status)}` : "No active goal",
+          description: goal?.objective ?? "This thread does not have a goal yet.",
+        });
+        return;
+      }
+      if (goalSlashCommand.action === "clear") {
+        await api.orchestration.dispatchCommand({
+          type: "thread.goal.clear",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          createdAt,
+        });
+        return;
+      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.goal.set",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        objective: goalSlashCommand.objective,
+        createdAt,
+      });
+      return;
+    }
     if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
@@ -3231,6 +3311,22 @@ export default function ChatView(props: ChatViewProps) {
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
+      {activeThread.goal && (
+        <div className="border-border/60 border-b bg-muted/30 px-3 py-2 sm:px-5">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <span className="rounded border border-border/60 bg-background px-1.5 py-0.5 font-medium text-foreground">
+              Goal
+            </span>
+            <span className="min-w-0 truncate text-foreground">{activeThread.goal.objective}</span>
+            <span className="text-muted-foreground">
+              {formatGoalStatus(activeThread.goal.status)}
+            </span>
+            {formatGoalUsage(activeThread.goal) && (
+              <span className="text-muted-foreground">{formatGoalUsage(activeThread.goal)}</span>
+            )}
+          </div>
+        </div>
+      )}
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}

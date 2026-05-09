@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderKind,
+  ThreadGoalSnapshot,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -85,6 +86,15 @@ export interface ProviderAdapterShape<TError> {
     requestId: ApprovalRequestId,
     answers: ProviderUserInputAnswers,
   ) => Effect.Effect<void, TError>;
+
+  readonly setGoal: (
+    threadId: ThreadId,
+    objective: string,
+  ) => Effect.Effect<ThreadGoalSnapshot, TError>;
+
+  readonly getGoal: (threadId: ThreadId) => Effect.Effect<ThreadGoalSnapshot | null, TError>;
+
+  readonly clearGoal: (threadId: ThreadId) => Effect.Effect<boolean, TError>;
 
   /**
    * Stop one provider session.

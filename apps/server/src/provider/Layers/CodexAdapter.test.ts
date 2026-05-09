@@ -8,6 +8,7 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  type ThreadGoalSnapshot,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -86,6 +87,22 @@ class FakeCodexManager extends CodexAppServerManager {
     ): Promise<void> => undefined,
   );
 
+  public setGoalImpl = vi.fn(
+    async (_threadId: ThreadId, objective: string): Promise<ThreadGoalSnapshot> => ({
+      providerThreadId: "provider-thread-1",
+      objective,
+      status: "active",
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    }),
+  );
+
+  public getGoalImpl = vi.fn(
+    async (_threadId: ThreadId): Promise<ThreadGoalSnapshot | null> => null,
+  );
+
+  public clearGoalImpl = vi.fn(async (_threadId: ThreadId): Promise<boolean> => true);
+
   public stopAllImpl = vi.fn(() => undefined);
 
   override startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
@@ -122,6 +139,18 @@ class FakeCodexManager extends CodexAppServerManager {
     answers: ProviderUserInputAnswers,
   ): Promise<void> {
     return this.respondToUserInputImpl(threadId, requestId, answers);
+  }
+
+  override setGoal(threadId: ThreadId, objective: string): Promise<ThreadGoalSnapshot> {
+    return this.setGoalImpl(threadId, objective);
+  }
+
+  override getGoal(threadId: ThreadId): Promise<ThreadGoalSnapshot | null> {
+    return this.getGoalImpl(threadId);
+  }
+
+  override clearGoal(threadId: ThreadId): Promise<boolean> {
+    return this.clearGoalImpl(threadId);
   }
 
   override stopSession(_threadId: ThreadId): void {}
@@ -973,6 +1002,80 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
       });
+    }),
+  );
+
+  it.effect("normalizes Codex goal updated notifications", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-goal-updated"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-05-09T00:00:00.000Z",
+        method: "thread/goal/updated",
+        payload: {
+          goal: {
+            threadId: "provider-thread-1",
+            objective: "Ship goal support",
+            status: "active",
+            tokenBudget: 1000,
+            tokensUsed: 10,
+            timeUsedSeconds: 2,
+            createdAt: "2026-05-09T00:00:00.000Z",
+            updatedAt: "2026-05-09T00:00:01.000Z",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "thread.goal.updated");
+      if (firstEvent.value.type !== "thread.goal.updated") {
+        return;
+      }
+      assert.deepEqual(firstEvent.value.payload.goal, {
+        providerThreadId: "provider-thread-1",
+        objective: "Ship goal support",
+        status: "active",
+        tokenBudget: 1000,
+        tokensUsed: 10,
+        timeUsedSeconds: 2,
+        createdAt: "2026-05-09T00:00:00.000Z",
+        updatedAt: "2026-05-09T00:00:01.000Z",
+      });
+    }),
+  );
+
+  it.effect("normalizes Codex goal cleared notifications", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-goal-cleared"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-05-09T00:00:00.000Z",
+        method: "thread/goal/cleared",
+        payload: {
+          threadId: "provider-thread-1",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "thread.goal.cleared");
     }),
   );
 });

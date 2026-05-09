@@ -8,6 +8,7 @@ import {
   RuntimeSessionId,
   ProviderSession,
   ProviderTurnStartResult,
+  type ThreadGoalSnapshot,
   ThreadId,
   TurnId,
   ProviderKind,
@@ -52,6 +53,7 @@ export type LegacyProviderRuntimeEvent = FixtureProviderRuntimeEvent;
 interface SessionState {
   readonly session: ProviderSession;
   snapshot: ProviderThreadSnapshot;
+  goal: ThreadGoalSnapshot | null;
   turnCount: number;
   readonly queuedResponses: Array<TestTurnResponse>;
   readonly rollbackCalls: Array<number>;
@@ -272,6 +274,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
             threadId,
             turns: [],
           },
+          goal: null,
           turnCount: 0,
           queuedResponses: queuedResponsesForNextSession.splice(0),
           rollbackCalls: [],
@@ -419,6 +422,46 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       _answers,
     ) => (sessions.has(threadId) ? Effect.void : missingSessionEffect(provider, threadId));
 
+    const setGoal: ProviderAdapterShape<ProviderAdapterError>["setGoal"] = (
+      threadId,
+      objective,
+    ) => {
+      const state = sessions.get(threadId);
+      if (!state) {
+        return missingSessionEffect(provider, threadId);
+      }
+      return Effect.sync(() => {
+        const now = nowIso();
+        state.goal = {
+          providerThreadId: String(threadId),
+          objective,
+          status: "active",
+          createdAt: state.goal?.createdAt ?? now,
+          updatedAt: now,
+        };
+        return state.goal;
+      });
+    };
+
+    const getGoal: ProviderAdapterShape<ProviderAdapterError>["getGoal"] = (threadId) => {
+      const state = sessions.get(threadId);
+      if (!state) {
+        return missingSessionEffect(provider, threadId);
+      }
+      return Effect.succeed(state.goal);
+    };
+
+    const clearGoal: ProviderAdapterShape<ProviderAdapterError>["clearGoal"] = (threadId) => {
+      const state = sessions.get(threadId);
+      if (!state) {
+        return missingSessionEffect(provider, threadId);
+      }
+      return Effect.sync(() => {
+        state.goal = null;
+        return true;
+      });
+    };
+
     const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (threadId) =>
       Effect.sync(() => {
         sessions.delete(threadId);
@@ -482,6 +525,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      setGoal,
+      getGoal,
+      clearGoal,
       stopSession,
       listSessions,
       hasSession,

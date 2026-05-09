@@ -13,6 +13,9 @@
  */
 import type {
   ProviderInterruptTurnInput,
+  ProviderGoalClearInput,
+  ProviderGoalGetInput,
+  ProviderGoalSetInput,
   ProviderKind,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -21,6 +24,7 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ThreadGoalSnapshot,
   ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -69,6 +73,18 @@ export interface ProviderServiceShape {
   readonly respondToUserInput: (
     input: ProviderRespondToUserInputInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly setGoal: (
+    input: ProviderGoalSetInput,
+  ) => Effect.Effect<ThreadGoalSnapshot, ProviderServiceError>;
+
+  readonly getGoal: (
+    input: ProviderGoalGetInput,
+  ) => Effect.Effect<ThreadGoalSnapshot | null, ProviderServiceError>;
+
+  readonly clearGoal: (
+    input: ProviderGoalClearInput,
+  ) => Effect.Effect<boolean, ProviderServiceError>;
 
   /**
    * Stop a provider session.

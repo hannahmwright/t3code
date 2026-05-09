@@ -14,6 +14,9 @@ import {
   NonNegativeInt,
   ThreadId,
   ProviderInterruptTurnInput,
+  ProviderGoalClearInput,
+  ProviderGoalGetInput,
+  ProviderGoalSetInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
@@ -559,6 +562,63 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const setGoal: ProviderServiceShape["setGoal"] = Effect.fn("setGoal")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.setGoal",
+      schema: ProviderGoalSetInput,
+      payload: rawInput,
+    });
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.setGoal",
+      allowRecovery: true,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "set-goal",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+    });
+    return yield* routed.adapter.setGoal(routed.threadId, input.objective);
+  });
+
+  const getGoal: ProviderServiceShape["getGoal"] = Effect.fn("getGoal")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.getGoal",
+      schema: ProviderGoalGetInput,
+      payload: rawInput,
+    });
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.getGoal",
+      allowRecovery: true,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "get-goal",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+    });
+    return yield* routed.adapter.getGoal(routed.threadId);
+  });
+
+  const clearGoal: ProviderServiceShape["clearGoal"] = Effect.fn("clearGoal")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.clearGoal",
+      schema: ProviderGoalClearInput,
+      payload: rawInput,
+    });
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.clearGoal",
+      allowRecovery: true,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "clear-goal",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+    });
+    return yield* routed.adapter.clearGoal(routed.threadId);
+  });
+
   const stopSession: ProviderServiceShape["stopSession"] = Effect.fn("stopSession")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -736,6 +796,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     interruptTurn,
     respondToRequest,
     respondToUserInput,
+    setGoal,
+    getGoal,
+    clearGoal,
     stopSession,
     listSessions,
     getCapabilities,

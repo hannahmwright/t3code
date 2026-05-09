@@ -164,4 +164,44 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
   });
+
+  it("decodes thread goal update and clear events", () => {
+    const updated = decodeRuntimeEvent({
+      type: "thread.goal.updated",
+      eventId: "event-goal-1",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:05.000Z",
+      threadId: "thread-1",
+      payload: {
+        goal: {
+          providerThreadId: "codex-thread-1",
+          objective: "Ship goal support",
+          status: "active",
+          tokenBudget: 100000,
+          tokensUsed: 512,
+          timeUsedSeconds: 42,
+          createdAt: "2026-02-28T00:00:05.000Z",
+          updatedAt: "2026-02-28T00:00:06.000Z",
+        },
+      },
+    });
+
+    expect(updated.type).toBe("thread.goal.updated");
+    if (updated.type !== "thread.goal.updated") {
+      throw new Error("expected thread.goal.updated");
+    }
+    expect(updated.payload.goal.objective).toBe("Ship goal support");
+    expect(updated.payload.goal.status).toBe("active");
+
+    const cleared = decodeRuntimeEvent({
+      type: "thread.goal.cleared",
+      eventId: "event-goal-2",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:07.000Z",
+      threadId: "thread-1",
+      payload: {},
+    });
+
+    expect(cleared.type).toBe("thread.goal.cleared");
+  });
 });

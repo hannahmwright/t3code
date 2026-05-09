@@ -3066,6 +3066,33 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* Deferred.succeed(pending.answers, answers);
   });
 
+  const setGoal: ClaudeAdapterShape["setGoal"] = (threadId) =>
+    Effect.fail(
+      new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "thread/goal/set",
+        detail: `Provider '${PROVIDER}' does not support goals for thread '${threadId}'.`,
+      }),
+    );
+
+  const getGoal: ClaudeAdapterShape["getGoal"] = (threadId) =>
+    Effect.fail(
+      new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "thread/goal/get",
+        detail: `Provider '${PROVIDER}' does not support goals for thread '${threadId}'.`,
+      }),
+    );
+
+  const clearGoal: ClaudeAdapterShape["clearGoal"] = (threadId) =>
+    Effect.fail(
+      new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "thread/goal/clear",
+        detail: `Provider '${PROVIDER}' does not support goals for thread '${threadId}'.`,
+      }),
+    );
+
   const stopSession: ClaudeAdapterShape["stopSession"] = Effect.fn("stopSession")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -3117,6 +3144,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     rollbackThread,
     respondToRequest,
     respondToUserInput,
+    setGoal,
+    getGoal,
+    clearGoal,
     stopSession,
     listSessions,
     hasSession,

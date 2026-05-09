@@ -238,6 +238,7 @@ const makeThread = (input?: {
     : null,
   branch: null,
   worktreePath: null,
+  goal: null,
   turnDiffSummaries: [],
   activities: [],
 });

@@ -17,6 +17,7 @@ import {
   type ProviderTurnStartResult,
   RuntimeMode,
   ProviderInteractionMode,
+  type ThreadGoalSnapshot,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Effect, Context } from "effect";
@@ -136,6 +137,8 @@ export interface CodexThreadSnapshot {
   threadId: string;
   turns: CodexThreadTurnSnapshot[];
 }
+
+export type CodexGoalSnapshot = ThreadGoalSnapshot;
 
 const CODEX_VERSION_CHECK_TIMEOUT_MS = 4_000;
 
@@ -470,7 +473,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const child = spawn(codexBinaryPath, ["app-server", "--enable", "goals"], {
         cwd: resolvedCwd,
         env: {
           ...process.env,
@@ -818,6 +821,46 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       activeTurnId: undefined,
     });
     return this.parseThreadSnapshot("thread/rollback", response);
+  }
+
+  async setGoal(threadId: ThreadId, objective: string): Promise<CodexGoalSnapshot> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = this.requireProviderThreadId(context, "thread/goal/set");
+    const trimmedObjective = objective.trim();
+    if (!trimmedObjective) {
+      throw new Error("Goal objective must not be empty.");
+    }
+
+    const response = await this.sendGoalRequest(context, "thread/goal/set", {
+      threadId: providerThreadId,
+      objective: trimmedObjective,
+    });
+    const goal = this.parseGoalResponse("thread/goal/set", response);
+    if (!goal) {
+      throw new Error("thread/goal/set response did not include a goal.");
+    }
+    return goal;
+  }
+
+  async getGoal(threadId: ThreadId): Promise<CodexGoalSnapshot | null> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = this.requireProviderThreadId(context, "thread/goal/get");
+
+    const response = await this.sendGoalRequest(context, "thread/goal/get", {
+      threadId: providerThreadId,
+    });
+    return this.parseGoalResponse("thread/goal/get", response);
+  }
+
+  async clearGoal(threadId: ThreadId): Promise<boolean> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = this.requireProviderThreadId(context, "thread/goal/clear");
+
+    const response = await this.sendGoalRequest(context, "thread/goal/clear", {
+      threadId: providerThreadId,
+    });
+    const cleared = this.readBoolean(this.readObject(response) ?? response, "cleared");
+    return cleared ?? true;
   }
 
   async respondToRequest(
@@ -1243,6 +1286,87 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return result as TResponse;
   }
 
+  private async sendGoalRequest(
+    context: CodexSessionContext,
+    method: "thread/goal/set" | "thread/goal/get" | "thread/goal/clear",
+    params: unknown,
+  ): Promise<unknown> {
+    try {
+      return await this.sendRequest(context, method, params);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes("goals feature is disabled")) {
+        throw new Error(
+          `${method} failed: Codex app-server goals feature is disabled. Restart Codex with '--enable goals'.`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+  }
+
+  private requireProviderThreadId(context: CodexSessionContext, method: string): string {
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error(`${method} requires a provider resume thread id.`);
+    }
+    return providerThreadId;
+  }
+
+  private parseGoalResponse(method: string, response: unknown): CodexGoalSnapshot | null {
+    const responseRecord = this.readObject(response);
+    if (responseRecord && "goal" in responseRecord) {
+      const goalRecord = this.readObject(responseRecord, "goal");
+      if (!goalRecord) {
+        return null;
+      }
+      return this.parseGoal(method, goalRecord);
+    }
+
+    const goalRecord = this.readObject(response);
+    if (!goalRecord) {
+      return null;
+    }
+    return this.parseGoal(method, goalRecord);
+  }
+
+  private parseGoal(method: string, goal: Record<string, unknown>): CodexGoalSnapshot {
+    const objective = this.readString(goal, "objective");
+    const status = this.readString(goal, "status");
+    const createdAt = this.readString(goal, "createdAt");
+    const updatedAt = this.readString(goal, "updatedAt");
+    if (!objective || !status || !createdAt || !updatedAt) {
+      throw new Error(`${method} response included an invalid goal.`);
+    }
+    if (
+      status !== "active" &&
+      status !== "paused" &&
+      status !== "budgetLimited" &&
+      status !== "complete"
+    ) {
+      throw new Error(`${method} response included an unsupported goal status '${status}'.`);
+    }
+
+    const tokenBudget = this.readNonNegativeInteger(goal, "tokenBudget");
+    const tokensUsed = this.readNonNegativeInteger(goal, "tokensUsed");
+    const timeUsedSeconds = this.readNonNegativeInteger(goal, "timeUsedSeconds");
+    const providerThreadId = this.readString(goal, "threadId");
+    return {
+      ...(providerThreadId ? { providerThreadId } : {}),
+      objective,
+      status,
+      ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+      ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+      ...(timeUsedSeconds !== undefined ? { timeUsedSeconds } : {}),
+      createdAt,
+      updatedAt,
+    };
+  }
+
   private writeMessage(context: CodexSessionContext, message: unknown): void {
     const encoded = JSON.stringify(message);
     if (!context.child.stdin.writable) {
@@ -1513,6 +1637,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     const candidate = (value as Record<string, unknown>)[key];
     return typeof candidate === "boolean" ? candidate : undefined;
+  }
+
+  private readNonNegativeInteger(value: unknown, key: string): number | undefined {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0
+      ? candidate
+      : undefined;
   }
 }
 

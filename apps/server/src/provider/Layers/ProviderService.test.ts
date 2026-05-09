@@ -24,6 +24,7 @@ import { Effect, Fiber, Layer, Metric, Option, PubSub, Ref, Stream } from "effec
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
   ProviderUnsupportedError,
   ProviderValidationError,
@@ -128,6 +129,21 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     ): Effect.Effect<void, ProviderAdapterError> => Effect.void,
   );
 
+  const setGoal = vi.fn(
+    (): Effect.Effect<never, ProviderAdapterError> =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider,
+          method: "thread/goal/set",
+          detail: "unsupported in test",
+        }),
+      ),
+  );
+
+  const getGoal = vi.fn((): Effect.Effect<null, ProviderAdapterError> => Effect.succeed(null));
+
+  const clearGoal = vi.fn((): Effect.Effect<boolean, ProviderAdapterError> => Effect.succeed(true));
+
   const stopSession = vi.fn(
     (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -185,6 +201,9 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     interruptTurn,
     respondToRequest,
     respondToUserInput,
+    setGoal,
+    getGoal,
+    clearGoal,
     stopSession,
     listSessions,
     hasSession,

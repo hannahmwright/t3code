@@ -6,6 +6,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  parseComposerGoalSlashCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -299,5 +300,19 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+
+  it("parses goal slash commands", () => {
+    expect(parseComposerGoalSlashCommand("/goal")).toEqual({ action: "show" });
+    expect(parseComposerGoalSlashCommand("/goal clear")).toEqual({ action: "clear" });
+    expect(parseComposerGoalSlashCommand("/goal ship app-server support")).toEqual({
+      action: "set",
+      objective: "ship app-server support",
+    });
+  });
+
+  it("does not fake unsupported goal pause or resume commands", () => {
+    expect(parseComposerGoalSlashCommand("/goal pause")).toBeNull();
+    expect(parseComposerGoalSlashCommand("/goal resume")).toBeNull();
   });
 });

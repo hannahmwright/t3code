@@ -736,6 +736,73 @@ describe("thread checkpoint control", () => {
   });
 });
 
+describe("thread goals", () => {
+  it("sets goals using the provider resume thread id", async () => {
+    const { manager, context, sendRequest } = createThreadControlHarness();
+    sendRequest.mockResolvedValue({
+      goal: {
+        threadId: "thread_1",
+        objective: "Ship goal support",
+        status: "active",
+        tokenBudget: 1000,
+        tokensUsed: 12,
+        timeUsedSeconds: 3,
+        createdAt: "2026-05-09T00:00:00.000Z",
+        updatedAt: "2026-05-09T00:00:00.000Z",
+      },
+    });
+
+    const goal = await manager.setGoal(asThreadId("thread_1"), " Ship goal support ");
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "thread/goal/set", {
+      threadId: "thread_1",
+      objective: "Ship goal support",
+    });
+    expect(goal).toEqual({
+      providerThreadId: "thread_1",
+      objective: "Ship goal support",
+      status: "active",
+      tokenBudget: 1000,
+      tokensUsed: 12,
+      timeUsedSeconds: 3,
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    });
+  });
+
+  it("gets and clears goals using the provider resume thread id", async () => {
+    const { manager, context, sendRequest } = createThreadControlHarness();
+    sendRequest
+      .mockResolvedValueOnce({
+        goal: {
+          threadId: "thread_1",
+          objective: "Keep it tidy",
+          status: "active",
+          createdAt: "2026-05-09T00:00:00.000Z",
+          updatedAt: "2026-05-09T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({ cleared: true });
+
+    await manager.getGoal(asThreadId("thread_1"));
+    await manager.clearGoal(asThreadId("thread_1"));
+
+    expect(sendRequest).toHaveBeenNthCalledWith(1, context, "thread/goal/get", {
+      threadId: "thread_1",
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(2, context, "thread/goal/clear", {
+      threadId: "thread_1",
+    });
+  });
+
+  it("returns null when no goal is set", async () => {
+    const { manager, sendRequest } = createThreadControlHarness();
+    sendRequest.mockResolvedValue({ goal: null });
+
+    await expect(manager.getGoal(asThreadId("thread_1"))).resolves.toBeNull();
+  });
+});
+
 describe("respondToUserInput", () => {
   it("serializes canonical answers to Codex native answer objects", async () => {
     const { manager, context, requireSession, writeMessage, emitEvent } =

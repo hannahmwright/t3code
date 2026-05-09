@@ -9,6 +9,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type ThreadGoalSnapshot,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -38,7 +39,10 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.goal-set-requested"
+      | "thread.goal-get-requested"
+      | "thread.goal-clear-requested";
   }
 >;
 
@@ -171,7 +175,8 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.goal.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -729,6 +734,59 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processGoalRequested = Effect.fn("processGoalRequested")(function* (
+    event: Extract<
+      ProviderIntentEvent,
+      | { type: "thread.goal-set-requested" }
+      | { type: "thread.goal-get-requested" }
+      | { type: "thread.goal-clear-requested" }
+    >,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    yield* ensureSessionForThread(event.payload.threadId, event.payload.createdAt);
+    const syncGoal = (goal: ThreadGoalSnapshot | null) =>
+      orchestrationEngine.dispatch({
+        type: "thread.goal.sync",
+        commandId: serverCommandId("provider-goal-sync"),
+        threadId: event.payload.threadId,
+        goal,
+        createdAt: event.payload.createdAt,
+      });
+
+    yield* Effect.gen(function* () {
+      if (event.type === "thread.goal-set-requested") {
+        const goal = yield* providerService.setGoal({
+          threadId: event.payload.threadId,
+          objective: event.payload.objective,
+        });
+        yield* syncGoal(goal);
+        return;
+      }
+      if (event.type === "thread.goal-clear-requested") {
+        yield* providerService.clearGoal({ threadId: event.payload.threadId });
+        yield* syncGoal(null);
+        return;
+      }
+      const goal = yield* providerService.getGoal({ threadId: event.payload.threadId });
+      yield* syncGoal(goal);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.goal.failed",
+          summary: "Provider goal request failed",
+          detail: Cause.pretty(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -769,6 +827,11 @@ const make = Effect.gen(function* () {
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
         return;
+      case "thread.goal-set-requested":
+      case "thread.goal-get-requested":
+      case "thread.goal-clear-requested":
+        yield* processGoalRequested(event);
+        return;
     }
   });
 
@@ -795,7 +858,10 @@ const make = Effect.gen(function* () {
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested"
+        event.type === "thread.session-stop-requested" ||
+        event.type === "thread.goal-set-requested" ||
+        event.type === "thread.goal-get-requested" ||
+        event.type === "thread.goal-clear-requested"
       ) {
         return yield* worker.enqueue(event);
       }

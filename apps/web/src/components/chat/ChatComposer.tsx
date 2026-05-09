@@ -739,6 +739,13 @@ export const ChatComposer = memo(
             label: "/default",
             description: "Switch this thread back to normal build mode",
           },
+          {
+            id: "slash:goal",
+            type: "slash-command",
+            command: "goal",
+            label: "/goal",
+            description: "View, set, or clear this thread goal",
+          },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
           (command) => ({
@@ -1369,6 +1376,24 @@ export const ChatComposer = memo(
         if (item.type === "slash-command") {
           if (item.command === "model") {
             const replacement = "/model ";
+            const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+              snapshot.value,
+              trigger.rangeEnd,
+              replacement,
+            );
+            const applied = applyPromptReplacement(
+              trigger.rangeStart,
+              replacementRangeEnd,
+              replacement,
+              { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            );
+            if (applied) {
+              setComposerHighlightedItemId(null);
+            }
+            return;
+          }
+          if (item.command === "goal") {
+            const replacement = "/goal ";
             const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
               snapshot.value,
               trigger.rangeEnd,
