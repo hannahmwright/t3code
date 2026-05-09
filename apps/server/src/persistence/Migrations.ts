@@ -38,6 +38,9 @@ import Migration0022 from "./Migrations/022_AuthSessionLastConnectedAt.ts";
 import Migration0023 from "./Migrations/023_ProjectionThreadShellSummary.ts";
 import Migration0024 from "./Migrations/024_BackfillProjectionThreadShellSummary.ts";
 import Migration0025 from "./Migrations/025_ProjectionThreadGoals.ts";
+import Migration0034 from "./Migrations/034_ProjectionThreadsCompatibilityColumns.ts";
+import Migration0035 from "./Migrations/035_UnassignedProjectThreadsCompatibility.ts";
+import Migration0036 from "./Migrations/036_AuthTablesCompatibility.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -75,6 +78,9 @@ export const migrationEntries = [
   [23, "ProjectionThreadShellSummary", Migration0023],
   [24, "BackfillProjectionThreadShellSummary", Migration0024],
   [25, "ProjectionThreadGoals", Migration0025],
+  [34, "ProjectionThreadsCompatibilityColumns", Migration0034],
+  [35, "UnassignedProjectThreadsCompatibility", Migration0035],
+  [36, "AuthTablesCompatibility", Migration0036],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
