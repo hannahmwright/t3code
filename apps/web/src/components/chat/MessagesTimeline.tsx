@@ -1,4 +1,4 @@
-import { type MessageId, type TurnId } from "@t3tools/contracts";
+import { type MessageId, type ModelSlug, type ProviderKind, type TurnId } from "@t3tools/contracts";
 import {
   memo,
   useCallback,
@@ -38,6 +38,17 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import {
+  Menu,
+  MenuGroup,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
+import {
   Dialog,
   DialogDescription,
   DialogHeader,
@@ -71,6 +82,15 @@ import {
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
+const REVIEW_PROVIDER_OPTIONS: ReadonlyArray<{ provider: ProviderKind; label: string }> = [
+  { provider: "codex", label: "Codex" },
+  { provider: "claudeAgent", label: "Claude" },
+];
+
+type ReviewModelSelection = {
+  provider: ProviderKind;
+  model: ModelSlug;
+};
 
 interface MessagesTimelineProps {
   hasMessages: boolean;
@@ -94,7 +114,13 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  onReviewAssistantMessage?: (message: TimelineMessage) => void;
+  reviewerProvider?: ProviderKind;
+  reviewerModel?: ModelSlug;
+  reviewerModelOptionsByProvider?: Record<
+    ProviderKind,
+    ReadonlyArray<{ slug: string; name: string }>
+  >;
+  onReviewAssistantMessage?: (message: TimelineMessage, selection: ReviewModelSelection) => void;
   onSendAssistantMessageToSource?: (message: TimelineMessage) => void;
 }
 
@@ -120,6 +146,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  reviewerProvider,
+  reviewerModel,
+  reviewerModelOptionsByProvider,
   onReviewAssistantMessage,
   onSendAssistantMessageToSource,
 }: MessagesTimelineProps) {
@@ -460,6 +489,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
           const canActOnAssistantMessage =
             !row.message.streaming && row.message.text.trim().length > 0;
+          const selectedReviewerModelLabel =
+            reviewerProvider && reviewerModel && reviewerModelOptionsByProvider
+              ? (reviewerModelOptionsByProvider[reviewerProvider].find(
+                  (option) => option.slug === reviewerModel,
+                )?.name ?? reviewerModel)
+              : null;
           return (
             <>
               {row.showCompletionDivider && (
@@ -534,18 +569,63 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   );
                 })()}
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  {canActOnAssistantMessage && onReviewAssistantMessage && (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      onClick={() => onReviewAssistantMessage(row.message)}
-                      title="Ask another thread to review this response"
-                    >
-                      <BotIcon className="size-3" />
-                      Review
-                    </Button>
-                  )}
+                  {canActOnAssistantMessage &&
+                    onReviewAssistantMessage &&
+                    reviewerProvider &&
+                    reviewerModel &&
+                    reviewerModelOptionsByProvider && (
+                      <Menu>
+                        <MenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              title="Ask another thread to review this response"
+                            />
+                          }
+                        >
+                          <BotIcon className="size-3" />
+                          Review with {selectedReviewerModelLabel ?? reviewerModel}
+                        </MenuTrigger>
+                        <MenuPopup align="start" className="[--available-height:min(24rem,70vh)]">
+                          {REVIEW_PROVIDER_OPTIONS.map((providerOption) => (
+                            <MenuSub key={providerOption.provider}>
+                              <MenuSubTrigger>{providerOption.label}</MenuSubTrigger>
+                              <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
+                                <MenuGroup>
+                                  <MenuRadioGroup
+                                    value={
+                                      reviewerProvider === providerOption.provider
+                                        ? reviewerModel
+                                        : ""
+                                    }
+                                    onValueChange={(value) => {
+                                      if (!value) return;
+                                      onReviewAssistantMessage(row.message, {
+                                        provider: providerOption.provider,
+                                        model: value as ModelSlug,
+                                      });
+                                    }}
+                                  >
+                                    {reviewerModelOptionsByProvider[providerOption.provider].map(
+                                      (modelOption) => (
+                                        <MenuRadioItem
+                                          key={`${providerOption.provider}:${modelOption.slug}`}
+                                          value={modelOption.slug}
+                                        >
+                                          {modelOption.name}
+                                        </MenuRadioItem>
+                                      ),
+                                    )}
+                                  </MenuRadioGroup>
+                                </MenuGroup>
+                              </MenuSubPopup>
+                            </MenuSub>
+                          ))}
+                        </MenuPopup>
+                      </Menu>
+                    )}
                   {canActOnAssistantMessage && onSendAssistantMessageToSource && (
                     <Button
                       type="button"

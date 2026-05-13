@@ -86,11 +86,18 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        reviewerProvider="claudeAgent"
+        reviewerModel="claude-reviewer"
+        reviewerModelOptionsByProvider={{
+          codex: [{ slug: "gpt-reviewer", name: "GPT Reviewer" }],
+          claudeAgent: [{ slug: "claude-reviewer", name: "Claude Reviewer" }],
+        }}
         onReviewAssistantMessage={() => {}}
       />,
     );
 
-    expect(markup).toContain("Review");
+    expect(markup).toContain("Review with");
+    expect(markup).toContain("Claude Reviewer");
     expect(markup).toContain("Ask another thread to review this response");
   });
 

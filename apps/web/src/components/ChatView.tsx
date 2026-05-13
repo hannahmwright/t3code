@@ -281,7 +281,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerThread = useStore((store) => store.syncServerThread);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
-  const { settings } = useAppSettings();
+  const { settings, updateSettings } = useAppSettings();
   const setStickyComposerModel = useComposerDraftStore((store) => store.setStickyModel);
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
@@ -3408,7 +3408,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const onReviewAssistantMessage = useCallback(
-    async (message: ChatMessage) => {
+    async (
+      message: ChatMessage,
+      selection: {
+        provider: ProviderKind;
+        model: ModelSlug;
+      },
+    ) => {
       const api = readNativeApi();
       if (
         !api ||
@@ -3423,6 +3429,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       const assistantMessageText = message.text.trim();
       if (assistantMessageText.length === 0) return;
+      updateSettings({
+        reviewerProvider: selection.provider,
+        reviewerModel: selection.model,
+      });
 
       const createdAt = new Date().toISOString();
       const nextThreadId = newThreadId();
@@ -3431,7 +3441,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         assistantMessageText,
       });
       const outgoingReviewPrompt = formatOutgoingPrompt({
-        provider: reviewerProvider,
+        provider: selection.provider,
         effort: null,
         text: reviewPrompt,
       });
@@ -3457,7 +3467,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           projectId: activeProject.id,
           sidechatSourceThreadId: activeThread.id,
           title: nextThreadTitle,
-          model: reviewerModel,
+          model: selection.model,
           runtimeMode,
           interactionMode: "default",
           branch: activeThread.branch,
@@ -3476,8 +3486,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
               attachments: [],
             },
             ...(providerMessageText !== undefined ? { providerMessageText } : {}),
-            provider: reviewerProvider,
-            model: reviewerModel,
+            provider: selection.provider,
+            model: selection.model,
             ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
             assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
             runtimeMode,
@@ -3497,7 +3507,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           toastManager.add({
             type: "info",
             title: "Review thread started",
-            description: `Using ${reviewerModel}.`,
+            description: `Using ${selection.model}.`,
           });
           return navigate({
             to: "/$threadId",
@@ -3539,11 +3549,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       navigate,
       providerOptionsForDispatch,
       resetSendPhase,
-      reviewerModel,
-      reviewerProvider,
       runtimeMode,
       settings.enableAssistantStreaming,
       syncServerReadModel,
+      updateSettings,
     ],
   );
 
@@ -4193,7 +4202,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 workspaceRoot={activeProject?.cwd ?? undefined}
                 {...(activeThread.sidechatSourceThreadId
                   ? { onSendAssistantMessageToSource }
-                  : { onReviewAssistantMessage })}
+                  : {
+                      reviewerProvider,
+                      reviewerModel,
+                      reviewerModelOptionsByProvider: modelOptionsByProvider,
+                      onReviewAssistantMessage,
+                    })}
               />
             </div>
 
