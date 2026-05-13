@@ -99,6 +99,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Review with");
     expect(markup).toContain("Claude Reviewer");
     expect(markup).toContain("Ask another thread to review this response");
+    expect(markup).toContain("lucide-chevron-down");
   });
 
   it("renders source relay affordance for completed reviewer messages", async () => {

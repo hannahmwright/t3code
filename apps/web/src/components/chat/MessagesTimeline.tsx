@@ -22,6 +22,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
@@ -40,12 +41,10 @@ import { Button } from "../ui/button";
 import {
   Menu,
   MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
   MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
+  MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
 import {
@@ -587,42 +586,49 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                         >
                           <BotIcon className="size-3" />
                           Review with {selectedReviewerModelLabel ?? reviewerModel}
+                          <ChevronDownIcon className="size-3" />
                         </MenuTrigger>
-                        <MenuPopup align="start" className="[--available-height:min(24rem,70vh)]">
-                          {REVIEW_PROVIDER_OPTIONS.map((providerOption) => (
-                            <MenuSub key={providerOption.provider}>
-                              <MenuSubTrigger>{providerOption.label}</MenuSubTrigger>
-                              <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
-                                <MenuGroup>
-                                  <MenuRadioGroup
-                                    value={
-                                      reviewerProvider === providerOption.provider
-                                        ? reviewerModel
-                                        : ""
-                                    }
-                                    onValueChange={(value) => {
-                                      if (!value) return;
-                                      onReviewAssistantMessage(row.message, {
-                                        provider: providerOption.provider,
-                                        model: value as ModelSlug,
-                                      });
-                                    }}
-                                  >
-                                    {reviewerModelOptionsByProvider[providerOption.provider].map(
-                                      (modelOption) => (
-                                        <MenuRadioItem
-                                          key={`${providerOption.provider}:${modelOption.slug}`}
-                                          value={modelOption.slug}
-                                        >
-                                          {modelOption.name}
-                                        </MenuRadioItem>
-                                      ),
-                                    )}
-                                  </MenuRadioGroup>
-                                </MenuGroup>
-                              </MenuSubPopup>
-                            </MenuSub>
-                          ))}
+                        <MenuPopup
+                          align="start"
+                          className="w-72 [--available-height:min(24rem,70vh)]"
+                        >
+                          {REVIEW_PROVIDER_OPTIONS.map((providerOption, providerIndex) => {
+                            const modelOptions =
+                              reviewerModelOptionsByProvider[providerOption.provider] ?? [];
+                            if (modelOptions.length === 0) return null;
+                            return (
+                              <MenuGroup key={providerOption.provider}>
+                                {providerIndex > 0 && <MenuSeparator />}
+                                <MenuGroupLabel>{providerOption.label}</MenuGroupLabel>
+                                {modelOptions.map((modelOption) => {
+                                  const selected =
+                                    reviewerProvider === providerOption.provider &&
+                                    reviewerModel === modelOption.slug;
+                                  return (
+                                    <MenuItem
+                                      key={`${providerOption.provider}:${modelOption.slug}`}
+                                      onClick={() =>
+                                        onReviewAssistantMessage(row.message, {
+                                          provider: providerOption.provider,
+                                          model: modelOption.slug as ModelSlug,
+                                        })
+                                      }
+                                    >
+                                      <CheckIcon
+                                        className={cn(
+                                          "size-3.5",
+                                          selected ? "opacity-100" : "opacity-0",
+                                        )}
+                                      />
+                                      <span className="min-w-0 flex-1 truncate">
+                                        {modelOption.name}
+                                      </span>
+                                    </MenuItem>
+                                  );
+                                })}
+                              </MenuGroup>
+                            );
+                          })}
                         </MenuPopup>
                       </Menu>
                     )}

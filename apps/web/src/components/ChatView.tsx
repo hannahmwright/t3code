@@ -3453,6 +3453,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const nextThreadTitle = truncateTitle(`Review: ${activeThread.title}`);
 
       sendInFlightRef.current = true;
+      setComposerDraftProvider(nextThreadId, selection.provider);
+      setComposerDraftModel(nextThreadId, selection.model);
+      setStickyComposerModel(selection.model);
       beginSendPhase("sending-turn");
       const finish = () => {
         sendInFlightRef.current = false;
@@ -3550,6 +3553,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       providerOptionsForDispatch,
       resetSendPhase,
       runtimeMode,
+      setComposerDraftModel,
+      setComposerDraftProvider,
+      setStickyComposerModel,
       settings.enableAssistantStreaming,
       syncServerReadModel,
       updateSettings,
