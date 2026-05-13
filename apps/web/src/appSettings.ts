@@ -28,6 +28,9 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 type CustomModelSettingsKey = "customCodexModels" | "customClaudeModels";
+const ReviewerProvider = Schema.Literals(["codex", "claudeAgent"]);
+export const DEFAULT_REVIEWER_PROVIDER: ProviderKind = "claudeAgent";
+export const DEFAULT_REVIEWER_MODEL = getDefaultModel(DEFAULT_REVIEWER_PROVIDER);
 export type ProviderCustomModelConfig = {
   provider: ProviderKind;
   settingsKey: CustomModelSettingsKey;
@@ -74,6 +77,8 @@ export const AppSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(withDefaults(() => DEFAULT_TIMESTAMP_FORMAT)),
   customCodexModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   customClaudeModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
+  reviewerProvider: ReviewerProvider.pipe(withDefaults(() => DEFAULT_REVIEWER_PROVIDER)),
+  reviewerModel: TrimmedNonEmptyString.pipe(withDefaults(() => DEFAULT_REVIEWER_MODEL)),
   textGenerationModel: Schema.optional(TrimmedNonEmptyString),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
@@ -238,6 +243,16 @@ export function getCustomModelOptionsByProvider(
     codex: getAppModelOptions("codex", customModelsByProvider.codex),
     claudeAgent: getAppModelOptions("claudeAgent", customModelsByProvider.claudeAgent),
   };
+}
+
+export function resolveReviewerModelSelection(
+  settings: Pick<AppSettings, CustomModelSettingsKey | "reviewerProvider" | "reviewerModel">,
+): string {
+  return resolveAppModelSelection(
+    settings.reviewerProvider,
+    getCustomModelsByProvider(settings),
+    settings.reviewerModel,
+  );
 }
 
 export function getProviderStartOptions(

@@ -129,6 +129,7 @@ import {
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
   getProviderStartOptions,
+  resolveReviewerModelSelection,
   resolveAppModelSelection,
   useAppSettings,
 } from "../appSettings";
@@ -726,6 +727,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   const providerOptionsForDispatch = useMemo(() => getProviderStartOptions(settings), [settings]);
+  const reviewerProvider = settings.reviewerProvider;
+  const reviewerModel = useMemo<ModelSlug>(
+    () => resolveReviewerModelSelection(settings) as ModelSlug,
+    [settings],
+  );
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
     () => getCustomModelOptionsByProvider(settings),
@@ -3425,8 +3431,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         assistantMessageText,
       });
       const outgoingReviewPrompt = formatOutgoingPrompt({
-        provider: selectedProvider,
-        effort: selectedPromptEffort,
+        provider: reviewerProvider,
+        effort: null,
         text: reviewPrompt,
       });
       const providerMessageText =
@@ -3435,11 +3441,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           sourceThread: activeThread,
         }) ?? undefined;
       const nextThreadTitle = truncateTitle(`Review: ${activeThread.title}`);
-      const nextThreadModel: ModelSlug =
-        selectedModel ||
-        (activeThread.model as ModelSlug) ||
-        (activeProject.model as ModelSlug) ||
-        DEFAULT_MODEL_BY_PROVIDER.codex;
 
       sendInFlightRef.current = true;
       beginSendPhase("sending-turn");
@@ -3456,7 +3457,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           projectId: activeProject.id,
           sidechatSourceThreadId: activeThread.id,
           title: nextThreadTitle,
-          model: nextThreadModel,
+          model: reviewerModel,
           runtimeMode,
           interactionMode: "default",
           branch: activeThread.branch,
@@ -3475,11 +3476,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
               attachments: [],
             },
             ...(providerMessageText !== undefined ? { providerMessageText } : {}),
-            provider: selectedProvider,
-            model: selectedModel || undefined,
-            ...(selectedModelOptionsForDispatch
-              ? { modelOptions: selectedModelOptionsForDispatch }
-              : {}),
+            provider: reviewerProvider,
+            model: reviewerModel,
             ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
             assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
             runtimeMode,
@@ -3499,7 +3497,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           toastManager.add({
             type: "info",
             title: "Review thread started",
-            description: "The reviewer has the source thread context and selected response.",
+            description: `Using ${reviewerModel}.`,
           });
           return navigate({
             to: "/$threadId",
@@ -3541,11 +3539,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       navigate,
       providerOptionsForDispatch,
       resetSendPhase,
+      reviewerModel,
+      reviewerProvider,
       runtimeMode,
-      selectedModel,
-      selectedModelOptionsForDispatch,
-      selectedPromptEffort,
-      selectedProvider,
       settings.enableAssistantStreaming,
       syncServerReadModel,
     ],

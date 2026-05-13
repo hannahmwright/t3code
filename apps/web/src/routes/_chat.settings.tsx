@@ -7,13 +7,16 @@ import {
   type ProviderKind,
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
 } from "@t3tools/contracts";
-import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
+  DEFAULT_REVIEWER_MODEL,
+  DEFAULT_REVIEWER_PROVIDER,
   getAppModelOptions,
   getCustomModelsForProvider,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
   patchCustomModels,
+  resolveReviewerModelSelection,
   useAppSettings,
 } from "../appSettings";
 import { APP_VERSION } from "../branding";
@@ -271,6 +274,20 @@ function SettingsRouteView() {
     settings.customCodexModels,
     settings.textGenerationModel,
   );
+  const reviewerModelOptions = getAppModelOptions(
+    settings.reviewerProvider,
+    getCustomModelsForProvider(settings, settings.reviewerProvider),
+    settings.reviewerModel,
+  );
+  const currentReviewerModel = resolveReviewerModelSelection(settings);
+  const defaultReviewerModel = defaults.reviewerModel ?? DEFAULT_REVIEWER_MODEL;
+  const defaultReviewerProvider = defaults.reviewerProvider ?? DEFAULT_REVIEWER_PROVIDER;
+  const isReviewerModelDirty =
+    settings.reviewerProvider !== defaultReviewerProvider ||
+    currentReviewerModel !== defaultReviewerModel;
+  const selectedReviewerModelLabel =
+    reviewerModelOptions.find((option) => option.slug === currentReviewerModel)?.name ??
+    currentReviewerModel;
   const currentGitTextGenerationModel =
     settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
   const defaultGitTextGenerationModel =
@@ -320,6 +337,7 @@ function SettingsRouteView() {
       ? ["Delete confirmation"]
       : []),
     ...(isGitTextGenerationModelDirty ? ["Git writing model"] : []),
+    ...(isReviewerModelDirty ? ["Reviewer model"] : []),
     ...(settings.customCodexModels.length > 0 || settings.customClaudeModels.length > 0
       ? ["Custom models"]
       : []),
@@ -894,6 +912,80 @@ function SettingsRouteView() {
             </SettingsSection>
 
             <SettingsSection title="Models">
+              <SettingsRow
+                title="Reviewer model"
+                description="Used when you ask another thread to review an agent response."
+                resetAction={
+                  isReviewerModelDirty ? (
+                    <SettingResetButton
+                      label="reviewer model"
+                      onClick={() =>
+                        updateSettings({
+                          reviewerProvider: defaults.reviewerProvider,
+                          reviewerModel: defaults.reviewerModel,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
+                    <Select
+                      value={settings.reviewerProvider}
+                      onValueChange={(value) => {
+                        if (value !== "codex" && value !== "claudeAgent") return;
+                        updateSettings({
+                          reviewerProvider: value,
+                          reviewerModel: getDefaultModel(value),
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-full sm:w-36" aria-label="Reviewer provider">
+                        <SelectValue>
+                          {
+                            MODEL_PROVIDER_SETTINGS.find(
+                              (providerSettings) =>
+                                providerSettings.provider === settings.reviewerProvider,
+                            )?.title
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end" alignItemWithTrigger={false}>
+                        {MODEL_PROVIDER_SETTINGS.map((providerSettings) => (
+                          <SelectItem
+                            hideIndicator
+                            key={providerSettings.provider}
+                            value={providerSettings.provider}
+                          >
+                            {providerSettings.title}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                    <Select
+                      value={currentReviewerModel}
+                      onValueChange={(value) => {
+                        if (!value) return;
+                        updateSettings({
+                          reviewerModel: value,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-full sm:w-56" aria-label="Reviewer model">
+                        <SelectValue>{selectedReviewerModelLabel}</SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end" alignItemWithTrigger={false}>
+                        {reviewerModelOptions.map((option) => (
+                          <SelectItem hideIndicator key={option.slug} value={option.slug}>
+                            {option.name}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </div>
+                }
+              />
+
               <SettingsRow
                 title="Git writing model"
                 description="Used for generated commit messages, PR titles, and branch names."

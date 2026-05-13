@@ -6,6 +6,8 @@ import {
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   DEFAULT_TIMESTAMP_FORMAT,
+  DEFAULT_REVIEWER_MODEL,
+  DEFAULT_REVIEWER_PROVIDER,
   getAppModelOptions,
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
@@ -16,6 +18,7 @@ import {
   normalizeCustomModelSlugs,
   patchCustomModels,
   resolveAppModelSelection,
+  resolveReviewerModelSelection,
 } from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
@@ -105,6 +108,19 @@ describe("resolveAppModelSelection", () => {
     expect(
       resolveAppModelSelection("codex", { codex: [], claudeAgent: [] }, "custom/selected-model"),
     ).toBe("custom/selected-model");
+  });
+});
+
+describe("resolveReviewerModelSelection", () => {
+  it("resolves the configured reviewer model independently from thread models", () => {
+    expect(
+      resolveReviewerModelSelection({
+        customCodexModels: [],
+        customClaudeModels: ["claude/custom-reviewer"],
+        reviewerProvider: "claudeAgent",
+        reviewerModel: "claude/custom-reviewer",
+      }),
+    ).toBe("claude/custom-reviewer");
   });
 });
 
@@ -264,6 +280,8 @@ describe("AppSettingsSchema", () => {
       timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
       customCodexModels: [],
       customClaudeModels: [],
+      reviewerProvider: DEFAULT_REVIEWER_PROVIDER,
+      reviewerModel: DEFAULT_REVIEWER_MODEL,
     });
   });
 });

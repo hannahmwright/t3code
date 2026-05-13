@@ -511,17 +511,22 @@ function titleForTool(itemType: CanonicalItemType): string {
   }
 }
 
-const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set([
+type SupportedClaudeImageMimeType = "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set<SupportedClaudeImageMimeType>([
   "image/gif",
   "image/jpeg",
   "image/png",
   "image/webp",
 ]);
+function isSupportedClaudeImageMimeType(value: string): value is SupportedClaudeImageMimeType {
+  return SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(value as SupportedClaudeImageMimeType);
+}
 const CLAUDE_SETTING_SOURCES = [
   "user",
   "project",
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
+type ClaudeUserContentBlock = Exclude<SDKUserMessage["message"]["content"], string>[number];
 
 function buildPromptText(input: ProviderSendTurnInput): string {
   const requestedEffort = resolveReasoningEffortForProvider(
@@ -539,7 +544,7 @@ function buildPromptText(input: ProviderSendTurnInput): string {
 }
 
 function buildUserMessage(input: {
-  readonly sdkContent: Array<Record<string, unknown>>;
+  readonly sdkContent: ClaudeUserContentBlock[];
 }): SDKUserMessage {
   return {
     type: "user",
@@ -553,9 +558,9 @@ function buildUserMessage(input: {
 }
 
 function buildClaudeImageContentBlock(input: {
-  readonly mimeType: string;
+  readonly mimeType: SupportedClaudeImageMimeType;
   readonly bytes: Uint8Array;
-}): Record<string, unknown> {
+}): ClaudeUserContentBlock {
   return {
     type: "image",
     source: {
@@ -575,7 +580,7 @@ function buildUserMessageEffect(
 ): Effect.Effect<SDKUserMessage, ProviderAdapterRequestError> {
   return Effect.gen(function* () {
     const text = buildPromptText(input);
-    const sdkContent: Array<Record<string, unknown>> = [];
+    const sdkContent: ClaudeUserContentBlock[] = [];
 
     if (text.length > 0) {
       sdkContent.push({ type: "text", text });
@@ -586,7 +591,7 @@ function buildUserMessageEffect(
         continue;
       }
 
-      if (!SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)) {
+      if (!isSupportedClaudeImageMimeType(attachment.mimeType)) {
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "turn/start",
