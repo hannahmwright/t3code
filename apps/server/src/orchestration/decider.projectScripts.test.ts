@@ -98,6 +98,54 @@ describe("decider project scripts", () => {
     expect((event.payload as { scripts?: unknown[] }).scripts).toEqual(scripts);
   });
 
+  it("propagates setAside in project.meta.update payload", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-set-aside"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-set-aside"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-set-aside"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-set-aside"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-set-aside"),
+          title: "Project",
+          emoji: null,
+          color: null,
+          groupName: null,
+          groupEmoji: null,
+          workspaceRoot: "/tmp/project-set-aside",
+          defaultModel: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-project-update-set-aside"),
+          projectId: asProjectId("project-set-aside"),
+          setAside: true,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.meta-updated");
+    expect((event.payload as { setAside?: boolean }).setAside).toBe(true);
+  });
+
   it("emits user message and turn-start-requested events for thread.turn.start", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);
@@ -177,6 +225,7 @@ describe("decider project scripts", () => {
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
+          notificationTargetEndpoint: "https://push.example/subscription-1",
           createdAt: now,
         },
         readModel,
@@ -206,6 +255,39 @@ describe("decider project scripts", () => {
         },
       },
       runtimeMode: "approval-required",
+      notificationTargetEndpoint: "https://push.example/subscription-1",
+    });
+  });
+
+  it("allows creating a thread without a project", async () => {
+    const now = new Date().toISOString();
+    const readModel = createEmptyReadModel(now);
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create-loose"),
+          threadId: ThreadId.makeUnsafe("thread-loose"),
+          projectId: null,
+          title: "Loose chat",
+          model: "gpt-5-codex",
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("thread.created");
+    expect(event.payload).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-loose"),
+      projectId: null,
+      title: "Loose chat",
     });
   });
 

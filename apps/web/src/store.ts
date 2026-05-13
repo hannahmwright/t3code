@@ -5,6 +5,7 @@ import {
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import {
   inferProviderForModel,
@@ -149,6 +150,7 @@ function mapProjectsFromReadModel(
         existing?.model ??
         resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex),
       expanded: existing?.expanded ?? persistedExpandedProjectCwds.has(project.workspaceRoot),
+      setAside: project.setAside ?? false,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       scripts: project.scripts.map((script) => ({ ...script })),
@@ -236,6 +238,107 @@ function attachmentPreviewRoutePath(attachmentId: string): string {
   return `/attachments/${encodeURIComponent(attachmentId)}`;
 }
 
+function mapThreadFromReadModelThread(
+  thread: OrchestrationThread,
+  existing: Thread | undefined,
+): Thread {
+  const incomingDetailsLoaded = thread.detailsLoaded ?? true;
+  const shouldKeepExistingDetails = !incomingDetailsLoaded && existing?.detailsLoaded === true;
+  const messages = shouldKeepExistingDetails
+    ? existing.messages.map((message) => ({ ...message }))
+    : thread.messages.map((message) => {
+        const attachments = message.attachments?.map((attachment) => ({
+          type: "image" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          previewUrl: toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachment.id)),
+        }));
+        const normalizedMessage: ChatMessage = {
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          turnId: message.turnId,
+          createdAt: message.createdAt,
+          streaming: message.streaming,
+          ...(message.streaming ? {} : { completedAt: message.updatedAt }),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        };
+        return normalizedMessage;
+      });
+  const proposedPlans = shouldKeepExistingDetails
+    ? existing.proposedPlans.map((proposedPlan) => ({ ...proposedPlan }))
+    : thread.proposedPlans.map((proposedPlan) => ({
+        id: proposedPlan.id,
+        turnId: proposedPlan.turnId,
+        planMarkdown: proposedPlan.planMarkdown,
+        implementedAt: proposedPlan.implementedAt,
+        implementationThreadId: proposedPlan.implementationThreadId,
+        createdAt: proposedPlan.createdAt,
+        updatedAt: proposedPlan.updatedAt,
+      }));
+  const turnDiffSummaries = shouldKeepExistingDetails
+    ? existing.turnDiffSummaries.map((checkpoint) => ({
+        ...checkpoint,
+        files: checkpoint.files.map((file) => ({ ...file })),
+      }))
+    : thread.checkpoints.map((checkpoint) => ({
+        turnId: checkpoint.turnId,
+        completedAt: checkpoint.completedAt,
+        status: checkpoint.status,
+        assistantMessageId: checkpoint.assistantMessageId ?? undefined,
+        checkpointTurnCount: checkpoint.checkpointTurnCount,
+        checkpointRef: checkpoint.checkpointRef,
+        files: checkpoint.files.map((file) => ({ ...file })),
+      }));
+  const activities = shouldKeepExistingDetails
+    ? existing.activities.map((activity) => ({ ...activity }))
+    : thread.activities.map((activity) => ({ ...activity }));
+
+  return {
+    id: thread.id,
+    codexThreadId: null,
+    projectId: thread.projectId,
+    sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
+    title: thread.title,
+    model: resolveModelSlugForProvider(
+      inferProviderForThreadModel({
+        model: thread.model,
+        sessionProviderName: thread.session?.providerName ?? null,
+      }),
+      thread.model,
+    ),
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+    session: thread.session
+      ? {
+          provider: toLegacyProvider(thread.session.providerName),
+          status: toLegacySessionStatus(thread.session.status),
+          orchestrationStatus: thread.session.status,
+          activeTurnId: thread.session.activeTurnId ?? undefined,
+          canInterrupt: thread.session.canInterrupt ?? false,
+          createdAt: thread.session.updatedAt,
+          updatedAt: thread.session.updatedAt,
+          ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
+        }
+      : null,
+    messages,
+    proposedPlans,
+    detailsLoaded: incomingDetailsLoaded || existing?.detailsLoaded === true,
+    error: thread.session?.lastError ?? null,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    latestTurn: thread.latestTurn,
+    lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    goal: thread.goal ?? null,
+    turnDiffSummaries,
+    activities,
+  };
+}
+
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
@@ -250,83 +353,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
-    .map((thread) => {
-      const existing = existingThreadById.get(thread.id);
-      return {
-        id: thread.id,
-        codexThreadId: null,
-        projectId: thread.projectId,
-        title: thread.title,
-        model: resolveModelSlugForProvider(
-          inferProviderForThreadModel({
-            model: thread.model,
-            sessionProviderName: thread.session?.providerName ?? null,
-          }),
-          thread.model,
-        ),
-        runtimeMode: thread.runtimeMode,
-        interactionMode: thread.interactionMode,
-        session: thread.session
-          ? {
-              provider: toLegacyProvider(thread.session.providerName),
-              status: toLegacySessionStatus(thread.session.status),
-              orchestrationStatus: thread.session.status,
-              activeTurnId: thread.session.activeTurnId ?? undefined,
-              canInterrupt: thread.session.canInterrupt ?? false,
-              createdAt: thread.session.updatedAt,
-              updatedAt: thread.session.updatedAt,
-              ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
-            }
-          : null,
-        messages: thread.messages.map((message) => {
-          const attachments = message.attachments?.map((attachment) => ({
-            type: "image" as const,
-            id: attachment.id,
-            name: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes,
-            previewUrl: toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachment.id)),
-          }));
-          const normalizedMessage: ChatMessage = {
-            id: message.id,
-            role: message.role,
-            text: message.text,
-            turnId: message.turnId,
-            createdAt: message.createdAt,
-            streaming: message.streaming,
-            ...(message.streaming ? {} : { completedAt: message.updatedAt }),
-            ...(attachments && attachments.length > 0 ? { attachments } : {}),
-          };
-          return normalizedMessage;
-        }),
-        proposedPlans: thread.proposedPlans.map((proposedPlan) => ({
-          id: proposedPlan.id,
-          turnId: proposedPlan.turnId,
-          planMarkdown: proposedPlan.planMarkdown,
-          implementedAt: proposedPlan.implementedAt,
-          implementationThreadId: proposedPlan.implementationThreadId,
-          createdAt: proposedPlan.createdAt,
-          updatedAt: proposedPlan.updatedAt,
-        })),
-        error: thread.session?.lastError ?? null,
-        createdAt: thread.createdAt,
-        updatedAt: thread.updatedAt,
-        latestTurn: thread.latestTurn,
-        lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
-          turnId: checkpoint.turnId,
-          completedAt: checkpoint.completedAt,
-          status: checkpoint.status,
-          assistantMessageId: checkpoint.assistantMessageId ?? undefined,
-          checkpointTurnCount: checkpoint.checkpointTurnCount,
-          checkpointRef: checkpoint.checkpointRef,
-          files: checkpoint.files.map((file) => ({ ...file })),
-        })),
-        activities: thread.activities.map((activity) => ({ ...activity })),
-      };
-    });
+    .map((thread) => mapThreadFromReadModelThread(thread, existingThreadById.get(thread.id)));
   return {
     ...state,
     workbooks,
@@ -334,6 +361,27 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     threads,
     threadsHydrated: true,
   };
+}
+
+export function syncServerThread(state: AppState, thread: OrchestrationThread): AppState {
+  if (thread.deletedAt !== null) {
+    return {
+      ...state,
+      threads: state.threads.filter((existing) => existing.id !== thread.id),
+    };
+  }
+
+  const existingIndex = state.threads.findIndex((existing) => existing.id === thread.id);
+  if (existingIndex < 0) {
+    return {
+      ...state,
+      threads: [...state.threads, mapThreadFromReadModelThread(thread, undefined)],
+    };
+  }
+
+  const threads = [...state.threads];
+  threads[existingIndex] = mapThreadFromReadModelThread(thread, threads[existingIndex]);
+  return { ...state, threads };
 }
 
 export function markThreadVisited(
@@ -390,6 +438,22 @@ export function setProjectExpanded(
   return changed ? { ...state, projects } : state;
 }
 
+export function setProjectSetAside(
+  state: AppState,
+  projectId: Project["id"],
+  setAside: boolean,
+): AppState {
+  let changed = false;
+  const projects = state.projects.map((project) => {
+    if (project.id !== projectId || Boolean(project.setAside) === setAside) {
+      return project;
+    }
+    changed = true;
+    return { ...project, setAside };
+  });
+  return changed ? { ...state, projects } : state;
+}
+
 export function reorderProjects(
   state: AppState,
   draggedProjectId: Project["id"],
@@ -437,10 +501,12 @@ export function setThreadBranch(
 
 interface AppStore extends AppState {
   syncServerReadModel: (readModel: OrchestrationReadModel) => void;
+  syncServerThread: (thread: OrchestrationThread) => void;
   markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
   markThreadUnread: (threadId: ThreadId) => void;
   toggleProject: (projectId: Project["id"]) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
+  setProjectSetAside: (projectId: Project["id"], setAside: boolean) => void;
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
@@ -449,12 +515,15 @@ interface AppStore extends AppState {
 export const useStore = create<AppStore>((set) => ({
   ...readPersistedState(),
   syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
+  syncServerThread: (thread) => set((state) => syncServerThread(state, thread)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId) => set((state) => markThreadUnread(state, threadId)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
+  setProjectSetAside: (projectId, setAside) =>
+    set((state) => setProjectSetAside(state, projectId, setAside)),
   reorderProjects: (draggedProjectId, targetProjectId) =>
     set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),

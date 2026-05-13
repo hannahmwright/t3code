@@ -41,6 +41,8 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetThreadSnapshotInput,
+  OrchestrationGetThreadSnapshotResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationEvent,
@@ -107,6 +109,28 @@ export interface DesktopEnvironmentBootstrap {
   bootstrapToken?: string;
 }
 
+export interface PetCompanionUsageBucket {
+  label: string;
+  remainingPercent: number;
+  usedPercent?: number;
+  resetsAt?: string;
+}
+
+export interface PetCompanionUsageSnapshot {
+  source: "runtime";
+  updatedAt: string;
+  primary?: PetCompanionUsageBucket;
+  secondary?: PetCompanionUsageBucket;
+}
+
+export interface PetCompanionStatusSnapshot {
+  title: string;
+  detail: string | null;
+  state: "running" | "waiting" | "failed" | "review";
+  isLoading: boolean;
+  updatedAt: string;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   getLocalEnvironmentBootstrap?: () => DesktopEnvironmentBootstrap | null;
@@ -118,6 +142,18 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  togglePetCompanion?: () => Promise<boolean>;
+  getPetCompanionState?: () => Promise<string | null>;
+  setPetCompanionState?: (state: string) => Promise<boolean>;
+  onPetCompanionState?: (listener: (state: string) => void) => () => void;
+  getPetCompanionUsage?: () => Promise<PetCompanionUsageSnapshot | null>;
+  setPetCompanionUsage?: (usage: PetCompanionUsageSnapshot | null) => Promise<boolean>;
+  onPetCompanionUsage?: (listener: (usage: PetCompanionUsageSnapshot | null) => void) => () => void;
+  getPetCompanionStatus?: () => Promise<PetCompanionStatusSnapshot | null>;
+  setPetCompanionStatus?: (status: PetCompanionStatusSnapshot | null) => Promise<boolean>;
+  onPetCompanionStatus?: (
+    listener: (status: PetCompanionStatusSnapshot | null) => void,
+  ) => () => void;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
@@ -182,6 +218,9 @@ export interface NativeApi {
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
+    getThreadSnapshot: (
+      input: OrchestrationGetThreadSnapshotInput,
+    ) => Promise<OrchestrationGetThreadSnapshotResult>;
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
     getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
     getFullThreadDiff: (

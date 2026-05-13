@@ -11,6 +11,7 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadGoalSnapshot,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -21,13 +22,15 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 
 export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
+  sidechatSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   title: Schema.String,
   model: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  goal: Schema.optional(Schema.NullOr(ThreadGoalSnapshot)),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -46,7 +49,7 @@ export const DeleteProjectionThreadInput = Schema.Struct({
 export type DeleteProjectionThreadInput = typeof DeleteProjectionThreadInput.Type;
 
 export const ListProjectionThreadsByProjectInput = Schema.Struct({
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
 });
 export type ListProjectionThreadsByProjectInput = typeof ListProjectionThreadsByProjectInput.Type;
 
@@ -76,6 +79,13 @@ export interface ProjectionThreadRepositoryShape {
   readonly listByProjectId: (
     input: ListProjectionThreadsByProjectInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThread>, ProjectionRepositoryError>;
+
+  /**
+   * List all projected thread rows.
+   *
+   * Returned in deterministic creation order.
+   */
+  readonly listAll: () => Effect.Effect<ReadonlyArray<ProjectionThread>, ProjectionRepositoryError>;
 
   /**
    * Soft-delete a projected thread row by id.

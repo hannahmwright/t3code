@@ -13,6 +13,7 @@ import {
   nativeImage,
   nativeTheme,
   protocol,
+  screen,
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
@@ -21,6 +22,8 @@ import type {
   DesktopTheme,
   DesktopUpdateActionResult,
   DesktopUpdateState,
+  PetCompanionStatusSnapshot,
+  PetCompanionUsageSnapshot,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
@@ -53,6 +56,16 @@ const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const PET_COMPANION_TOGGLE_CHANNEL = "desktop:pet-companion-toggle";
+const PET_COMPANION_GET_STATE_CHANNEL = "desktop:pet-companion-get-state";
+const PET_COMPANION_SET_STATE_CHANNEL = "desktop:pet-companion-set-state";
+const PET_COMPANION_STATE_CHANNEL = "desktop:pet-companion-state";
+const PET_COMPANION_GET_USAGE_CHANNEL = "desktop:pet-companion-get-usage";
+const PET_COMPANION_SET_USAGE_CHANNEL = "desktop:pet-companion-set-usage";
+const PET_COMPANION_USAGE_CHANNEL = "desktop:pet-companion-usage";
+const PET_COMPANION_GET_STATUS_CHANNEL = "desktop:pet-companion-get-status";
+const PET_COMPANION_SET_STATUS_CHANNEL = "desktop:pet-companion-set-status";
+const PET_COMPANION_STATUS_CHANNEL = "desktop:pet-companion-status";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -80,7 +93,33 @@ const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
+function isBrokenPipeError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED")
+  );
+}
+
+function ignoreBrokenOutputPipe(stream: NodeJS.WriteStream): void {
+  stream.on("error", (error) => {
+    if (isBrokenPipeError(error)) {
+      return;
+    }
+
+    throw error;
+  });
+}
+
+ignoreBrokenOutputPipe(process.stdout);
+ignoreBrokenOutputPipe(process.stderr);
+
 let mainWindow: BrowserWindow | null = null;
+let petWindow: BrowserWindow | null = null;
+let petCompanionState = "idle";
+let petCompanionUsage: PetCompanionUsageSnapshot | null = null;
+let petCompanionStatus: PetCompanionStatusSnapshot | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
@@ -1184,6 +1223,46 @@ function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.removeHandler(PET_COMPANION_TOGGLE_CHANNEL);
+  ipcMain.handle(PET_COMPANION_TOGGLE_CHANNEL, async () => {
+    togglePetCompanionWindow();
+    return true;
+  });
+
+  ipcMain.removeHandler(PET_COMPANION_GET_STATE_CHANNEL);
+  ipcMain.handle(PET_COMPANION_GET_STATE_CHANNEL, async () => petCompanionState);
+
+  ipcMain.removeHandler(PET_COMPANION_SET_STATE_CHANNEL);
+  ipcMain.handle(PET_COMPANION_SET_STATE_CHANNEL, async (_event, rawState: unknown) => {
+    if (typeof rawState !== "string" || rawState.trim().length === 0) {
+      return false;
+    }
+    petCompanionState = rawState;
+    emitPetCompanionState();
+    return true;
+  });
+
+  ipcMain.removeHandler(PET_COMPANION_SET_USAGE_CHANNEL);
+  ipcMain.handle(PET_COMPANION_SET_USAGE_CHANNEL, async (_event, usage: unknown) => {
+    petCompanionUsage = isPetCompanionUsageSnapshot(usage) ? usage : null;
+    emitPetCompanionUsage();
+    return true;
+  });
+
+  ipcMain.removeHandler(PET_COMPANION_GET_USAGE_CHANNEL);
+  ipcMain.handle(PET_COMPANION_GET_USAGE_CHANNEL, async () => petCompanionUsage);
+
+  ipcMain.removeHandler(PET_COMPANION_SET_STATUS_CHANNEL);
+  ipcMain.handle(PET_COMPANION_SET_STATUS_CHANNEL, async (_event, status: unknown) => {
+    petCompanionStatus = isPetCompanionStatusSnapshot(status) ? status : null;
+    resizePetCompanionWindow();
+    emitPetCompanionStatus();
+    return true;
+  });
+
+  ipcMain.removeHandler(PET_COMPANION_GET_STATUS_CHANNEL);
+  ipcMain.handle(PET_COMPANION_GET_STATUS_CHANNEL, async () => petCompanionStatus);
+
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
   ipcMain.handle(UPDATE_GET_STATE_CHANNEL, async () => updateState);
 
@@ -1244,6 +1323,170 @@ function buildDesktopAppUrl(): string {
   }
   appUrl.searchParams.set("desktopWsBaseUrl", backendWsUrl);
   return appUrl.toString();
+}
+
+function buildDesktopPetUrl(): string {
+  const httpBaseUrl = toHttpBaseUrl(backendWsUrl);
+  const rawDevServerUrl = process.env.VITE_DEV_SERVER_URL;
+  const petUrl =
+    isDevelopment && rawDevServerUrl
+      ? new URL("/pet-window.html", rawDevServerUrl)
+      : httpBaseUrl
+        ? new URL("/pet-window.html", httpBaseUrl)
+        : new URL(`${DESKTOP_SCHEME}://app/pet-window.html`);
+
+  if (httpBaseUrl) {
+    petUrl.searchParams.set("desktopHttpBaseUrl", httpBaseUrl);
+  }
+  petUrl.searchParams.set("desktopWsBaseUrl", backendWsUrl);
+  return petUrl.toString();
+}
+
+function getInitialPetWindowBounds(): { x: number; y: number; width: number; height: number } {
+  const { width, height } = getPetWindowSize();
+  const display = screen.getPrimaryDisplay();
+  const { workArea } = display;
+  return {
+    width,
+    height,
+    x: Math.round(workArea.x + workArea.width - width - 24),
+    y: Math.round(workArea.y + workArea.height - height - 36),
+  };
+}
+
+function createPetCompanionWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    ...getInitialPetWindowBounds(),
+    minWidth: 112,
+    minHeight: 121,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    focusable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    backgroundColor: "#00000000",
+    title: `${APP_DISPLAY_NAME} Pet`,
+    webPreferences: {
+      preload: Path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  window.setAlwaysOnTop(true, "floating");
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const externalUrl = getSafeExternalUrl(url);
+    if (externalUrl) {
+      void shell.openExternal(externalUrl);
+    }
+    return { action: "deny" };
+  });
+  window.once("ready-to-show", () => {
+    if (!window.isDestroyed()) {
+      window.showInactive();
+    }
+  });
+  window.webContents.on("did-finish-load", () => {
+    emitPetCompanionState();
+    emitPetCompanionUsage();
+    emitPetCompanionStatus();
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.warn("[pet] renderer process gone", details);
+    if (petWindow === window) {
+      petWindow = null;
+    }
+  });
+  window.webContents.on("unresponsive", () => {
+    console.warn("[pet] renderer became unresponsive");
+  });
+  window.on("closed", () => {
+    if (petWindow === window) {
+      petWindow = null;
+    }
+  });
+
+  void window.loadURL(buildDesktopPetUrl());
+  return window;
+}
+
+function emitPetCompanionState(): void {
+  sendPetCompanionMessage(PET_COMPANION_STATE_CHANNEL, petCompanionState);
+}
+
+function emitPetCompanionUsage(): void {
+  sendPetCompanionMessage(PET_COMPANION_USAGE_CHANNEL, petCompanionUsage);
+}
+
+function emitPetCompanionStatus(): void {
+  sendPetCompanionMessage(PET_COMPANION_STATUS_CHANNEL, petCompanionStatus);
+}
+
+function sendPetCompanionMessage(channel: string, payload: unknown): void {
+  if (!petWindow || petWindow.isDestroyed() || petWindow.webContents.isDestroyed()) return;
+  try {
+    petWindow.webContents.send(channel, payload);
+  } catch (error) {
+    console.warn("[pet] failed to send renderer message", error);
+  }
+}
+
+function isPetCompanionUsageSnapshot(value: unknown): value is PetCompanionUsageSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return record.source === "runtime" && typeof record.updatedAt === "string";
+}
+
+function isPetCompanionStatusSnapshot(value: unknown): value is PetCompanionStatusSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.title === "string" &&
+    (record.detail === null || typeof record.detail === "string") &&
+    (record.state === "running" ||
+      record.state === "waiting" ||
+      record.state === "failed" ||
+      record.state === "review") &&
+    typeof record.isLoading === "boolean" &&
+    typeof record.updatedAt === "string"
+  );
+}
+
+function getPetWindowSize(): { width: number; height: number } {
+  return petCompanionStatus ? { width: 318, height: 236 } : { width: 112, height: 121 };
+}
+
+function resizePetCompanionWindow(): void {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  try {
+    petWindow.setBounds(getInitialPetWindowBounds(), false);
+  } catch (error) {
+    console.warn("[pet] failed to resize companion window", error);
+  }
+}
+
+function showPetCompanionWindow(): void {
+  const existingWindow = petWindow && !petWindow.isDestroyed() ? petWindow : null;
+  const window = existingWindow ?? createPetCompanionWindow();
+  petWindow = window;
+  if (window.isVisible()) {
+    window.hide();
+    return;
+  }
+  window.setAlwaysOnTop(true, "floating");
+  window.showInactive();
+}
+
+function togglePetCompanionWindow(): void {
+  showPetCompanionWindow();
 }
 
 function createWindow(): BrowserWindow {

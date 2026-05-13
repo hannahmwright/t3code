@@ -14,6 +14,7 @@ import {
   AuthCreatePairingCredentialInput,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EventId,
   type ClientOrchestrationCommand,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
@@ -35,6 +36,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Ref,
   Result,
@@ -73,6 +75,11 @@ import {
   resolveAttachmentPath,
   resolveAttachmentPathById,
 } from "./attachmentStore.ts";
+import {
+  CODEX_PETS_ROUTE_PREFIX,
+  buildCodexPetsListResponse,
+  resolveLocalCodexPetSpritesheetPath,
+} from "./pets";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
@@ -81,6 +88,19 @@ import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 import { PushNotificationService } from "./notifications/Services/PushNotificationService.ts";
 import { ServerAuth } from "./auth/ServerAuth.ts";
+import {
+  VISUAL_PROOF_API_ROUTE_PREFIX,
+  VISUAL_PROOF_ARTIFACTS_ROUTE_PREFIX,
+  buildVisualProofRunPayload,
+  captureVisualProofStep,
+  completeVisualProofRun,
+  failVisualProofRun,
+  serveVisualProofArtifact,
+  type VisualProofCaptureInput,
+  type VisualProofCompleteInput,
+  type VisualProofFailInput,
+  type VisualProofRunState,
+} from "./visualProof.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -111,6 +131,14 @@ const isServerNotRunningError = (error: Error): boolean => {
   return (
     maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
   );
+};
+
+const safeDecodeURIComponent = (value: string): string | null => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 };
 
 function websocketRawToString(raw: unknown): string | null {
@@ -326,6 +354,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     host,
     logWebSocketEvents,
     autoBootstrapProjectFromCwd,
+    visualProofArtifactsDir,
   } = serverConfig;
   const availableEditors = resolveAvailableEditors();
 
@@ -536,6 +565,29 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
                 ? error.message
                 : `Failed to parse request body: ${String(error)}`,
           });
+        const appendVisualProofActivity = (input: {
+          readonly run: VisualProofRunState;
+          readonly kind:
+            | "visual-proof.step-captured"
+            | "visual-proof.completed"
+            | "visual-proof.failed";
+          readonly summary: string;
+        }) =>
+          orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.makeUnsafe(`server:visual-proof:${crypto.randomUUID()}`),
+            threadId: input.run.threadId,
+            activity: {
+              id: EventId.makeUnsafe(`visual-proof:${crypto.randomUUID()}`),
+              tone: input.kind === "visual-proof.failed" ? "error" : "info",
+              kind: input.kind,
+              summary: input.summary,
+              payload: buildVisualProofRunPayload(input.run),
+              turnId: input.run.turnId,
+              createdAt: input.run.updatedAt,
+            },
+            createdAt: input.run.updatedAt,
+          });
 
         if (url.pathname.startsWith("/api/auth/") && req.method === "OPTIONS") {
           if (Object.keys(authCorsHeaders).length === 0) {
@@ -714,6 +766,192 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
 
+        if (
+          url.pathname.startsWith(`${VISUAL_PROOF_ARTIFACTS_ROUTE_PREFIX}/`) &&
+          req.method === "GET"
+        ) {
+          const rawArtifactId = url.pathname.slice(VISUAL_PROOF_ARTIFACTS_ROUTE_PREFIX.length + 1);
+          const artifactId = safeDecodeURIComponent(rawArtifactId);
+          if (
+            artifactId &&
+            serveVisualProofArtifact({
+              req,
+              res,
+              visualProofArtifactsDir,
+              artifactId,
+            })
+          ) {
+            return;
+          }
+          respond(404, { "Content-Type": "text/plain" }, "Not Found");
+          return;
+        }
+
+        if (url.pathname.startsWith(`${VISUAL_PROOF_API_ROUTE_PREFIX}/`) && req.method === "POST") {
+          const match = url.pathname.match(/^\/api\/visual-proof\/([^/]+)\/([^/]+)$/);
+          const runId = match?.[1] ? safeDecodeURIComponent(match[1]) : null;
+          const action = match?.[2] ?? null;
+          if (!runId || (action !== "capture" && action !== "complete" && action !== "fail")) {
+            respond(
+              404,
+              { "Content-Type": "application/json" },
+              JSON.stringify({ error: "Not Found" }),
+            );
+            return;
+          }
+
+          const bodyText = yield* readJsonBody();
+          const parsedBody = yield* decodeJsonPayload({
+            bodyText,
+            decode: (value) => value,
+          }).pipe(
+            Effect.mapError(
+              (message) =>
+                new RouteRequestError({
+                  message,
+                }),
+            ),
+          );
+
+          const runExit = yield* Effect.gen(function* () {
+            if (action === "capture") {
+              const run = yield* Effect.tryPromise({
+                try: () =>
+                  captureVisualProofStep({
+                    visualProofArtifactsDir,
+                    runId,
+                    request: parsedBody as VisualProofCaptureInput,
+                  }),
+                catch: (error) =>
+                  new RouteRequestError({
+                    message: error instanceof Error ? error.message : String(error),
+                  }),
+              });
+              yield* appendVisualProofActivity({
+                run,
+                kind: "visual-proof.step-captured",
+                summary: "Visual proof captured",
+              });
+              return run;
+            }
+            if (action === "complete") {
+              const run = yield* Effect.try({
+                try: () =>
+                  completeVisualProofRun({
+                    runId,
+                    request: parsedBody as VisualProofCompleteInput,
+                  }),
+                catch: (error) =>
+                  new RouteRequestError({
+                    message: error instanceof Error ? error.message : String(error),
+                  }),
+              });
+              yield* appendVisualProofActivity({
+                run,
+                kind: run.status === "failed" ? "visual-proof.failed" : "visual-proof.completed",
+                summary: run.status === "failed" ? "Visual proof failed" : "Visual proof completed",
+              });
+              return run;
+            }
+            const run = yield* Effect.try({
+              try: () =>
+                failVisualProofRun({
+                  runId,
+                  request: parsedBody as VisualProofFailInput,
+                }),
+              catch: (error) =>
+                new RouteRequestError({
+                  message: error instanceof Error ? error.message : String(error),
+                }),
+            });
+            yield* appendVisualProofActivity({
+              run,
+              kind: "visual-proof.failed",
+              summary: "Visual proof failed",
+            });
+            return run;
+          }).pipe(Effect.exit);
+
+          if (Exit.isFailure(runExit)) {
+            respond(
+              400,
+              {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+              },
+              JSON.stringify({
+                error: Cause.pretty(runExit.cause),
+              }),
+            );
+            return;
+          }
+
+          const run = runExit.value;
+
+          respond(
+            200,
+            {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store",
+            },
+            JSON.stringify(buildVisualProofRunPayload(run)),
+          );
+          return;
+        }
+
+        if (url.pathname === CODEX_PETS_ROUTE_PREFIX && req.method === "GET") {
+          respond(
+            200,
+            {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store",
+            },
+            JSON.stringify(buildCodexPetsListResponse()),
+          );
+          return;
+        }
+
+        if (url.pathname.startsWith(`${CODEX_PETS_ROUTE_PREFIX}/`) && req.method === "GET") {
+          const match = url.pathname.match(/^\/api\/pets\/([^/]+)\/spritesheet$/);
+          const petId = match?.[1] ? safeDecodeURIComponent(match[1]) : null;
+          const filePath = petId ? resolveLocalCodexPetSpritesheetPath({ petId }) : null;
+          if (!filePath) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+
+          const fileInfo = yield* fileSystem
+            .stat(filePath)
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (!fileInfo || fileInfo.type !== "File") {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+
+          const contentType = Mime.getType(filePath) ?? "application/octet-stream";
+          res.writeHead(200, {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=31536000, immutable",
+          });
+          const streamExit = yield* Stream.runForEach(fileSystem.stream(filePath), (chunk) =>
+            Effect.sync(() => {
+              if (!res.destroyed) {
+                res.write(chunk);
+              }
+            }),
+          ).pipe(Effect.exit);
+          if (Exit.isFailure(streamExit)) {
+            if (!res.destroyed) {
+              res.destroy();
+            }
+            return;
+          }
+          if (!res.writableEnded) {
+            res.end();
+          }
+          return;
+        }
+
         if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
           const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
           const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
@@ -864,6 +1102,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   // between the runtime server and the websocket server under Node.
   const wss = new WebSocketServer({
     server: httpServer,
+    perMessageDeflate: {
+      concurrencyLimit: 4,
+      threshold: 16 * 1024,
+    },
     verifyClient: authToken
       ? (((info, done) => {
           void runPromise(serverAuth.validateWebSocketRequest(info.req))
@@ -902,11 +1144,25 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
+  const providerService = yield* ProviderService;
   const { openInEditor } = yield* Open;
   const pushNotificationService = yield* PushNotificationService;
 
   const subscriptionsScope = yield* Scope.make("sequential");
-  yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* providerService.stopAllSessions();
+      const drainResult = yield* orchestrationReactor.drain.pipe(Effect.timeoutOption(2_000));
+      if (Option.isNone(drainResult)) {
+        yield* Effect.logWarning("timed out waiting for orchestration shutdown ingestion to drain");
+      }
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed during provider shutdown drain", { cause: Cause.pretty(cause) }),
+      ),
+      Effect.flatMap(() => Scope.close(subscriptionsScope, Exit.void)),
+    ),
+  );
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
     pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event).pipe(
@@ -1024,8 +1280,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
     switch (request.body._tag) {
-      case ORCHESTRATION_WS_METHODS.getSnapshot:
-        return yield* projectionReadModelQuery.getSnapshot();
+      case ORCHESTRATION_WS_METHODS.getSnapshot: {
+        const body = stripRequestTag(request.body);
+        return yield* projectionReadModelQuery.getSnapshot(body);
+      }
+
+      case ORCHESTRATION_WS_METHODS.getThreadSnapshot: {
+        const { threadId } = request.body;
+        return yield* projectionReadModelQuery.getThreadSnapshot(threadId);
+      }
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand: {
         const { command } = request.body;

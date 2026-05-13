@@ -12,6 +12,9 @@
  * @module ProviderService
  */
 import type {
+  ProviderGoalClearInput,
+  ProviderGoalGetInput,
+  ProviderGoalSetInput,
   ProviderInterruptTurnInput,
   ProviderKind,
   ProviderRespondToRequestInput,
@@ -21,6 +24,7 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ThreadGoalSnapshot,
   ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -70,12 +74,32 @@ export interface ProviderServiceShape {
     input: ProviderRespondToUserInputInput,
   ) => Effect.Effect<void, ProviderServiceError>;
 
+  readonly setGoal: (
+    input: ProviderGoalSetInput,
+  ) => Effect.Effect<ThreadGoalSnapshot, ProviderServiceError>;
+
+  readonly getGoal: (
+    input: ProviderGoalGetInput,
+  ) => Effect.Effect<ThreadGoalSnapshot | null, ProviderServiceError>;
+
+  readonly clearGoal: (
+    input: ProviderGoalClearInput,
+  ) => Effect.Effect<boolean, ProviderServiceError>;
+
   /**
    * Stop a provider session.
    */
   readonly stopSession: (
     input: ProviderStopSessionInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Stop all active provider sessions and flush provider runtime fan-out.
+   *
+   * Intended for application shutdown; idempotent so finalizers and explicit
+   * shutdown paths can both call it safely.
+   */
+  readonly stopAllSessions: () => Effect.Effect<void>;
 
   /**
    * List active provider sessions.

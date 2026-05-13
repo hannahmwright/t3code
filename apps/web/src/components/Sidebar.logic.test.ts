@@ -466,6 +466,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
     messages: [],
+    detailsLoaded: true,
     proposedPlans: [],
     error: null,
     createdAt: "2026-03-09T10:00:00.000Z",
@@ -810,6 +811,34 @@ describe("groupProjectsForSidebar", () => {
         projects: [],
       },
     ]);
+  });
+
+  it("does not show workbook headers for projects that only exist in another sidebar section", () => {
+    const workbookId = WorkbookId.makeUnsafe("workbook-studio");
+    const grouped = groupProjectsForSidebar({
+      projects: [],
+      allProjects: [
+        makeProject({
+          id: ProjectId.makeUnsafe("project-set-aside"),
+          name: "Veranote",
+          workbookId,
+          groupName: "Studio",
+          groupEmoji: "🎧",
+          setAside: true,
+        }),
+      ],
+      workbooks: [
+        {
+          id: workbookId,
+          name: "Studio",
+          emoji: "🎧",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(grouped).toEqual([]);
   });
 });
 

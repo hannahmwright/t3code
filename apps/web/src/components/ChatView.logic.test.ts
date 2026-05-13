@@ -2,7 +2,10 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildAgentReviewPrompt,
+  buildAgentReviewRelayPrompt,
   buildExpiredTerminalContextToastCopy,
+  buildSidechatProviderMessage,
   deriveComposerPrimaryActionState,
   deriveComposerSendState,
   shouldResetSendPhase,
@@ -70,6 +73,63 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("buildSidechatProviderMessage", () => {
+  it("wraps recent source messages without changing the visible user request", () => {
+    const message = buildSidechatProviderMessage({
+      userMessageText: "what were we talking about?",
+      sourceThread: {
+        title: "Launch plan",
+        messages: [
+          { role: "user", text: "We were fixing sidebar search." },
+          { role: "assistant", text: "Sidebar search now scans message text." },
+        ],
+      },
+    });
+
+    expect(message).toContain("Source chat: Launch plan");
+    expect(message).toContain("User: We were fixing sidebar search.");
+    expect(message).toContain("Assistant: Sidebar search now scans message text.");
+    expect(message).toContain("Current user request:\nwhat were we talking about?");
+  });
+
+  it("returns null when there is no source text to send", () => {
+    expect(
+      buildSidechatProviderMessage({
+        userMessageText: "hello",
+        sourceThread: {
+          title: "Empty",
+          messages: [{ role: "assistant", text: "   " }],
+        },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("agent review prompt builders", () => {
+  it("builds a reviewer prompt around the selected assistant response", () => {
+    const prompt = buildAgentReviewPrompt({
+      sourceThreadTitle: "Canvas deletion bug",
+      assistantMessageText: "I changed connector cleanup.",
+    });
+
+    expect(prompt).toContain('Review this response from "Canvas deletion bug"');
+    expect(prompt).toContain("<assistant_response_to_review>");
+    expect(prompt).toContain("I changed connector cleanup.");
+    expect(prompt).toContain("missing tests");
+  });
+
+  it("builds a relay prompt that tells the source agent how to use reviewer feedback", () => {
+    const prompt = buildAgentReviewRelayPrompt({
+      reviewThreadTitle: "Review: Canvas deletion bug",
+      reviewerMessageText: "Connector deletion still needs a regression test.",
+    });
+
+    expect(prompt).toContain('Reviewer feedback from "Review: Canvas deletion bug"');
+    expect(prompt).toContain("Connector deletion still needs a regression test.");
+    expect(prompt).toContain("Please respond to this review in the original thread.");
   });
 });
 

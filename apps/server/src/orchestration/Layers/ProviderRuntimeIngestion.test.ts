@@ -24,13 +24,16 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
@@ -71,7 +74,11 @@ function createProviderServiceHarness() {
     interruptTurn: () => unsupported(),
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
+    setGoal: () => unsupported(),
+    getGoal: () => unsupported(),
+    clearGoal: () => unsupported(),
     stopSession: () => unsupported(),
+    stopAllSessions: () => Effect.void,
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     rollbackConversation: () => unsupported(),
@@ -129,7 +136,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService,
+    OrchestrationEngineService | ProviderRuntimeIngestionService | ProviderSessionRuntimeRepository,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -155,11 +162,12 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness() {
+  async function createHarness(options?: { readonly startIngestion?: boolean }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     fs.mkdirSync(path.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -167,6 +175,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(ProviderSessionRuntimeRepositoryLive),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
@@ -176,8 +185,14 @@ describe("ProviderRuntimeIngestion", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(ingestion.start.pipe(Scope.provide(scope)));
+    const startIngestion = () => Effect.runPromise(ingestion.start.pipe(Scope.provide(scope!)));
+    if (options?.startIngestion !== false) {
+      await startIngestion();
+    }
     const drain = () => Effect.runPromise(ingestion.drain);
+    const runtimeRepository = await runtime.runPromise(
+      Effect.service(ProviderSessionRuntimeRepository),
+    );
 
     const createdAt = new Date().toISOString();
     await Effect.runPromise(
@@ -236,9 +251,53 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      runtimeRepository,
+      startIngestion,
       drain,
     };
   }
+
+  it("reconciles stale running sessions from persisted stopped runtime state on start", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const stoppedAt = new Date().toISOString();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-stale-running"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: asTurnId("turn-stale"),
+          updatedAt: stoppedAt,
+          lastError: null,
+        },
+        createdAt: stoppedAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.runtimeRepository.upsert({
+        threadId: asThreadId("thread-1"),
+        providerName: "codex",
+        adapterKey: "codex",
+        runtimeMode: "full-access",
+        status: "stopped",
+        lastSeenAt: stoppedAt,
+        resumeCursor: null,
+        runtimePayload: { activeTurnId: null },
+      }),
+    );
+
+    await harness.startIngestion();
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "stopped" && entry.session.activeTurnId === null,
+    );
+    expect(thread.session?.providerName).toBe("codex");
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

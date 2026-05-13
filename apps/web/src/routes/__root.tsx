@@ -1,4 +1,9 @@
-import { type OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import {
+  type OrchestrationReadModel,
+  type OrchestrationThreadActivity,
+  type PetCompanionStatusSnapshot,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -6,7 +11,7 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
@@ -14,6 +19,7 @@ import { APP_DISPLAY_NAME } from "../branding";
 import { ServerAuthGate } from "../components/ServerAuthGate";
 import { TurnCompletionNotifications } from "../TurnCompletionNotifications";
 import { Button } from "../components/ui/button";
+import { isElectron } from "../env";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
@@ -32,6 +38,21 @@ import {
   writeStoredActiveThreadId,
 } from "../rootThreadRestore";
 import { ServerAuthProvider } from "../serverAuthContext";
+import {
+  derivePendingApprovals,
+  derivePendingUserInputs,
+  deriveWorkLogEntries,
+} from "../session-logic";
+import {
+  resolveCodexPetUsageSnapshot,
+  resolvePetStateFromThreadActivity,
+  setDesktopPetCompanionState,
+  setDesktopPetCompanionStatus,
+  setDesktopPetCompanionUsage,
+  shouldShowPetCompanionStatus,
+} from "../petCompanion";
+import { derivePetCompanionRuntimeSnapshot } from "../petCompanionStatus";
+import type { Thread } from "../types";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -44,6 +65,18 @@ export const Route = createRootRouteWithContext<{
 });
 
 const SNAPSHOT_RECOVERY_RETRY_MS = 1_000;
+
+function selectActiveRouteThreadId(state: { matches: Array<{ params: Record<string, unknown> }> }) {
+  for (let index = state.matches.length - 1; index >= 0; index -= 1) {
+    const candidate = state.matches[index];
+    const threadId =
+      candidate && "threadId" in candidate.params ? candidate.params.threadId : undefined;
+    if (typeof threadId === "string" && threadId.length > 0) {
+      return threadId;
+    }
+  }
+  return null;
+}
 
 function RootRouteView() {
   return (
@@ -73,10 +106,162 @@ function AuthenticatedRootRouteView() {
       <AnchoredToastProvider>
         <EventRouter />
         <TurnCompletionNotifications />
+        <PetCompanionStateBridge />
+        <PetCompanionUsageBridge />
         <DesktopProjectBootstrap />
         <Outlet />
       </AnchoredToastProvider>
     </ToastProvider>
+  );
+}
+
+function PetCompanionStateBridge() {
+  const threads = useStore((store) => store.threads);
+  const activeRouteThreadId = useRouterState({ select: selectActiveRouteThreadId });
+  const { petState, petStatus } = useMemo(
+    () => derivePetCompanionBridgeSnapshot(threads, activeRouteThreadId),
+    [activeRouteThreadId, threads],
+  );
+
+  useEffect(() => {
+    if (!isElectron) return;
+    void setDesktopPetCompanionState(petState);
+  }, [petState]);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    void setDesktopPetCompanionStatus(petStatus);
+  }, [petStatus]);
+
+  return null;
+}
+
+function PetCompanionUsageBridge() {
+  const latestRateLimitActivity = useStore(selectLatestCodexRateLimitActivity);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    if (!latestRateLimitActivity) {
+      void setDesktopPetCompanionUsage(null);
+      return;
+    }
+
+    const payload =
+      latestRateLimitActivity.payload &&
+      typeof latestRateLimitActivity.payload === "object" &&
+      "rateLimits" in latestRateLimitActivity.payload
+        ? (latestRateLimitActivity.payload as { rateLimits?: unknown }).rateLimits
+        : latestRateLimitActivity.payload;
+    void setDesktopPetCompanionUsage(
+      resolveCodexPetUsageSnapshot(payload, latestRateLimitActivity.createdAt),
+    );
+  }, [latestRateLimitActivity]);
+
+  return null;
+}
+
+function selectLatestCodexRateLimitActivity(store: {
+  threads: Thread[];
+}): OrchestrationThreadActivity | null {
+  let latestActivity: OrchestrationThreadActivity | null = null;
+  let latestTime = 0;
+  for (const thread of store.threads) {
+    for (const activity of thread.activities) {
+      if (activity.kind !== "codex.rate-limits.updated") continue;
+      const activityTime = Date.parse(activity.createdAt);
+      if (!Number.isFinite(activityTime) || activityTime <= latestTime) continue;
+      latestActivity = activity;
+      latestTime = activityTime;
+    }
+  }
+  return latestActivity;
+}
+
+function derivePetCompanionBridgeSnapshot(
+  threads: readonly Thread[],
+  activeThreadId: string | null = null,
+): {
+  petState: ReturnType<typeof resolvePetStateFromThreadActivity>;
+  petStatus: PetCompanionStatusSnapshot | null;
+} {
+  const { petState, statusThread: thread } = derivePetCompanionRuntimeSnapshot(
+    threads,
+    activeThreadId,
+  );
+  if (!shouldShowPetCompanionStatus(petState)) return { petState, petStatus: null };
+  if (!thread) return { petState, petStatus: null };
+
+  return {
+    petState,
+    petStatus: {
+      title: thread.title.trim() || "T3 Code",
+      detail: derivePetCompanionStatusDetail(thread, petState),
+      state: petState,
+      isLoading: petState === "running",
+      updatedAt: thread.updatedAt ?? thread.latestTurn?.startedAt ?? thread.createdAt,
+    },
+  };
+}
+
+function derivePetCompanionStatusDetail(
+  thread: Thread,
+  state: PetCompanionStatusSnapshot["state"],
+): string | null {
+  if (state === "waiting") {
+    const pendingUserInput = derivePendingUserInputs(thread.activities)[0];
+    const activeQuestion = pendingUserInput?.questions[0];
+    const question = normalizePetStatusText(activeQuestion?.question);
+    if (question) return question;
+
+    const pendingApproval = derivePendingApprovals(thread.activities)[0];
+    return normalizePetStatusText(pendingApproval?.detail) ?? "Needs input";
+  }
+
+  if (state === "failed") {
+    return (
+      normalizePetStatusText(thread.error) ??
+      normalizePetStatusText(thread.session?.lastError) ??
+      "Something went wrong."
+    );
+  }
+
+  const latestAssistantText = thread.messages
+    .toReversed()
+    .find((message) => message.role === "assistant" && message.text.trim().length > 0)
+    ?.text.trim();
+  const assistantDetail = normalizePetStatusText(latestAssistantText);
+  if (assistantDetail) return assistantDetail;
+
+  const latestWorkEntry = deriveWorkLogEntries(
+    thread.activities,
+    thread.latestTurn?.turnId ?? undefined,
+  ).at(-1);
+  const workDetail =
+    normalizePetStatusText(latestWorkEntry?.detail) ??
+    normalizePetStatusText(latestWorkEntry?.label);
+  if (workDetail) return workDetail;
+
+  return state === "running" ? "Working..." : "Ready for review";
+}
+
+function normalizePetStatusText(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  if (isDiagnosticPetStatusText(text)) return null;
+  return text.length <= 140 ? text : `${text.slice(0, 137).trimEnd()}...`;
+}
+
+function isDiagnosticPetStatusText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.startsWith("[") ||
+    lower.includes("_diagnostic") ||
+    lower.includes("result_type=") ||
+    lower.includes("stream_error") ||
+    lower.includes("providerruntime") ||
+    lower.includes("__") ||
+    /^[a-z0-9_.-]+=[^\s]+(?:\s+[a-z0-9_.-]+=)/i.test(text)
   );
 }
 
@@ -160,19 +345,7 @@ function EventRouter() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const activeRouteThreadId = useRouterState({
-    select: (state) => {
-      for (let index = state.matches.length - 1; index >= 0; index -= 1) {
-        const candidate = state.matches[index];
-        const threadId =
-          candidate && "threadId" in candidate.params ? candidate.params.threadId : undefined;
-        if (typeof threadId === "string" && threadId.length > 0) {
-          return threadId;
-        }
-      }
-      return null;
-    },
-  });
+  const activeRouteThreadId = useRouterState({ select: selectActiveRouteThreadId });
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
 
@@ -265,7 +438,7 @@ function EventRouter() {
       }
 
       const targetThread = latestSnapshot.threads.find((thread) => thread.id === targetThreadId);
-      if (targetThread) {
+      if (targetThread?.projectId) {
         setProjectExpanded(targetThread.projectId, true);
       }
 

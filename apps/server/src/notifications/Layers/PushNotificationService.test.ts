@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { OrchestrationEvent } from "@t3tools/contracts";
 
 import {
   DEFAULT_VAPID_SUBJECT,
   normalizeVapidSubject,
+  shouldNotifyForTurnCompletionSnapshot,
   shouldNotifyForTurnDiffCompletionStatus,
   shouldDeletePushSubscriptionAfterFailure,
   withNormalizedVapidSubject,
@@ -80,6 +82,62 @@ describe("PushNotificationService", () => {
       expect(shouldNotifyForTurnDiffCompletionStatus("missing")).toBe(false);
       expect(shouldNotifyForTurnDiffCompletionStatus("ready")).toBe(true);
       expect(shouldNotifyForTurnDiffCompletionStatus("error")).toBe(true);
+    });
+  });
+
+  describe("shouldNotifyForTurnCompletionSnapshot", () => {
+    const event = {
+      type: "thread.turn-diff-completed",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "ready",
+      },
+    } as Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }>;
+
+    it("requires the completed event to match the settled latest turn", () => {
+      expect(
+        shouldNotifyForTurnCompletionSnapshot({
+          event,
+          thread: {
+            latestTurn: {
+              turnId: "turn-older",
+              completedAt: "2026-05-03T00:00:00.000Z",
+            },
+            session: null,
+          },
+        }),
+      ).toBe(false);
+      expect(
+        shouldNotifyForTurnCompletionSnapshot({
+          event,
+          thread: {
+            latestTurn: {
+              turnId: "turn-1",
+              completedAt: null,
+            },
+            session: {
+              status: "running",
+              activeTurnId: "turn-1",
+            },
+          },
+        }),
+      ).toBe(false);
+      expect(
+        shouldNotifyForTurnCompletionSnapshot({
+          event,
+          thread: {
+            latestTurn: {
+              turnId: "turn-1",
+              completedAt: "2026-05-03T00:00:00.000Z",
+            },
+            session: {
+              status: "ready",
+              activeTurnId: null,
+            },
+          },
+        }),
+      ).toBe(true);
     });
   });
 });

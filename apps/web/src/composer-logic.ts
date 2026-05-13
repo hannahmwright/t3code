@@ -2,7 +2,12 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "pet" | "goal";
+
+export type ComposerGoalSlashCommand =
+  | { action: "show" }
+  | { action: "clear" }
+  | { action: "set"; objective: string };
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -11,7 +16,7 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default"];
+const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "pet", "goal"];
 const isInlineTokenSegment = (
   segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -239,14 +244,34 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
-  const match = /^\/(plan|default)\s*$/i.exec(text.trim());
+): Exclude<ComposerSlashCommand, "model" | "goal"> | null {
+  const match = /^\/(plan|default|pet)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
   const command = match[1]?.toLowerCase();
   if (command === "plan") return "plan";
+  if (command === "pet") return "pet";
   return "default";
+}
+
+export function parseComposerGoalSlashCommand(text: string): ComposerGoalSlashCommand | null {
+  const trimmed = text.trim();
+  const match = /^\/goal(?:\s+(.*))?$/i.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const argument = match[1]?.trim() ?? "";
+  if (!argument) {
+    return { action: "show" };
+  }
+  if (argument.toLowerCase() === "clear") {
+    return { action: "clear" };
+  }
+  if (argument.toLowerCase() === "pause" || argument.toLowerCase() === "resume") {
+    return null;
+  }
+  return { action: "set", objective: argument };
 }
 
 export function replaceTextRange(

@@ -4,6 +4,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
+import { ActivityIndexSummarizerLive } from "./activity-index/Layers/ActivityIndexSummarizer";
 import { ServerConfig } from "./config";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
@@ -92,6 +93,7 @@ export function makeServerRuntimeServicesLayer() {
   const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(GitCoreLive));
 
   const orchestrationLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -105,6 +107,7 @@ export function makeServerRuntimeServicesLayer() {
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
     OrchestrationProjectionSnapshotQueryLive,
+    ProviderSessionRuntimeRepositoryLive,
     checkpointStoreLayer,
     checkpointDiffQueryLayer,
     RuntimeReceiptBusLive,
@@ -143,6 +146,7 @@ export function makeServerRuntimeServicesLayer() {
   return Layer.mergeAll(
     runtimeServicesLayer,
     orchestrationReactorLayer,
+    ActivityIndexSummarizerLive,
     GitCoreLive,
     gitManagerLayer,
     terminalLayer,

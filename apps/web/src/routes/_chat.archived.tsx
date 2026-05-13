@@ -57,7 +57,9 @@ function ArchivedRouteView() {
         .map((thread) => ({
           id: thread.id,
           title: thread.title,
-          projectTitle: projectTitleById.get(thread.projectId) ?? "Unknown project",
+          projectTitle: thread.projectId
+            ? (projectTitleById.get(thread.projectId) ?? "Unknown project")
+            : "Chats",
           archivedAt: thread.deletedAt ?? thread.updatedAt,
           messageCount: thread.messages.length,
           latestPreview: thread.messages.at(-1)?.text ?? null,

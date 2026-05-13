@@ -34,6 +34,11 @@ import Migration0026 from "./Migrations/026_ProjectDisplayMetadata.ts";
 import Migration0027 from "./Migrations/027_ProjectAccentColor.ts";
 import Migration0028 from "./Migrations/028_AuthSessions.ts";
 import Migration0029 from "./Migrations/029_Workbooks.ts";
+import Migration0030 from "./Migrations/030_ProjectSetAside.ts";
+import Migration0031 from "./Migrations/031_ProjectionThreadsNullableProject.ts";
+import Migration0032 from "./Migrations/032_ProjectionThreadsSidechatSource.ts";
+import Migration0033 from "./Migrations/033_ProjectionTurnsNotificationTarget.ts";
+import Migration0034 from "./Migrations/034_ProjectionThreadGoals.ts";
 import { Effect } from "effect";
 
 /**
@@ -69,6 +74,11 @@ const loader = Migrator.fromRecord({
   "27_ProjectAccentColor": Migration0027,
   "28_AuthSessions": Migration0028,
   "29_Workbooks": Migration0029,
+  "30_ProjectSetAside": Migration0030,
+  "31_ProjectionThreadsNullableProject": Migration0031,
+  "32_ProjectionThreadsSidechatSource": Migration0032,
+  "33_ProjectionTurnsNotificationTarget": Migration0033,
+  "34_ProjectionThreadGoals": Migration0034,
 });
 
 /**

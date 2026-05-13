@@ -7,6 +7,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { ActivityIndexExportLive } from "../../activity-index/Layers/ActivityIndexExport.ts";
+import { ActivityIndexExport } from "../../activity-index/Services/ActivityIndexExport.ts";
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
@@ -342,6 +344,7 @@ const runAttachmentSideEffects = Effect.fn(function* (sideEffects: AttachmentSid
 
 const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const activityIndexExport = yield* ActivityIndexExport;
   const eventStore = yield* OrchestrationEventStore;
   const projectionStateRepository = yield* ProjectionStateRepository;
   const projectionWorkbookRepository = yield* ProjectionWorkbookRepository;
@@ -433,6 +436,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             title: event.payload.title,
             emoji: event.payload.emoji,
             color: event.payload.color ?? null,
+            setAside: event.payload.setAside ?? false,
             workbookId,
             groupName: event.payload.groupName,
             groupEmoji: event.payload.groupEmoji ?? null,
@@ -485,6 +489,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.emoji !== undefined ? { emoji: event.payload.emoji } : {}),
             ...(event.payload.color !== undefined ? { color: event.payload.color } : {}),
+            ...(event.payload.setAside !== undefined ? { setAside: event.payload.setAside } : {}),
             ...(event.payload.workbookId !== undefined
               ? { workbookId: event.payload.workbookId ?? null }
               : {}),
@@ -533,12 +538,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
+            sidechatSourceThreadId: event.payload.sidechatSourceThreadId,
             title: event.payload.title,
             model: event.payload.model,
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            goal: event.payload.goal ?? null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -650,9 +657,20 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           if (Option.isNone(existingRow)) {
             return;
           }
+          const session = yield* projectionThreadSessionRepository.getByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const isStalePlaceholderForRunningSession =
+            event.payload.status === "missing" &&
+            Option.isSome(session) &&
+            session.value.status === "running" &&
+            session.value.activeTurnId !== null &&
+            session.value.activeTurnId !== event.payload.turnId;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.turnId,
+            latestTurnId: isStalePlaceholderForRunningSession
+              ? existingRow.value.latestTurnId
+              : event.payload.turnId,
             updatedAt: event.occurredAt,
           });
           return;
@@ -893,6 +911,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
+            notificationTargetEndpoint: event.payload.notificationTargetEndpoint ?? null,
             requestedAt: event.payload.createdAt,
           });
           return;
@@ -932,6 +951,11 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
                 (Option.isSome(pendingTurnStart)
                   ? pendingTurnStart.value.sourceProposedPlanId
                   : null),
+              notificationTargetEndpoint:
+                existingTurn.value.notificationTargetEndpoint ??
+                (Option.isSome(pendingTurnStart)
+                  ? pendingTurnStart.value.notificationTargetEndpoint
+                  : null),
               startedAt:
                 existingTurn.value.startedAt ??
                 (Option.isSome(pendingTurnStart)
@@ -955,6 +979,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
                 : null,
               sourceProposedPlanId: Option.isSome(pendingTurnStart)
                 ? pendingTurnStart.value.sourceProposedPlanId
+                : null,
+              notificationTargetEndpoint: Option.isSome(pendingTurnStart)
+                ? pendingTurnStart.value.notificationTargetEndpoint
                 : null,
               assistantMessageId: null,
               state: "running",
@@ -1011,6 +1038,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
+            notificationTargetEndpoint: null,
             assistantMessageId: event.payload.messageId,
             state: event.payload.streaming ? "running" : "completed",
             requestedAt: event.payload.createdAt,
@@ -1048,6 +1076,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
+            notificationTargetEndpoint: null,
             assistantMessageId: null,
             state: "interrupted",
             requestedAt: event.payload.createdAt,
@@ -1066,7 +1095,26 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
           });
-          const nextState = event.payload.status === "error" ? "error" : "completed";
+          const session = yield* projectionThreadSessionRepository.getByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const isActivePlaceholderForRunningSession =
+            event.payload.status === "missing" &&
+            Option.isSome(session) &&
+            session.value.status === "running" &&
+            session.value.activeTurnId === event.payload.turnId;
+          const nextState = isActivePlaceholderForRunningSession
+            ? "running"
+            : event.payload.status === "error"
+              ? "error"
+              : event.payload.status === "missing"
+                ? "interrupted"
+                : "completed";
+          const nextCompletedAt = isActivePlaceholderForRunningSession
+            ? Option.isSome(existingTurn)
+              ? existingTurn.value.completedAt
+              : null
+            : event.payload.completedAt;
           yield* projectionTurnRepository.clearCheckpointTurnConflict({
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
@@ -1084,7 +1132,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               checkpointFiles: event.payload.files,
               startedAt: existingTurn.value.startedAt ?? event.payload.completedAt,
               requestedAt: existingTurn.value.requestedAt ?? event.payload.completedAt,
-              completedAt: event.payload.completedAt,
+              completedAt: nextCompletedAt,
             });
             return;
           }
@@ -1094,11 +1142,12 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
+            notificationTargetEndpoint: null,
             assistantMessageId: event.payload.assistantMessageId,
             state: nextState,
             requestedAt: event.payload.completedAt,
             startedAt: event.payload.completedAt,
-            completedAt: event.payload.completedAt,
+            completedAt: nextCompletedAt,
             checkpointTurnCount: event.payload.checkpointTurnCount,
             checkpointRef: event.payload.checkpointRef,
             checkpointStatus: event.payload.status,
@@ -1305,6 +1354,15 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
       );
     });
 
+  const refreshActivityIndex = activityIndexExport.refresh().pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("failed to refresh activity index export", {
+        path: activityIndexExport.filePath,
+        cause,
+      }),
+    ),
+  );
+
   const bootstrapProjector = (projector: ProjectorDefinition) =>
     projectionStateRepository
       .getByProjector({
@@ -1329,6 +1387,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),
       Effect.asVoid,
+      Effect.tap(() => refreshActivityIndex),
       Effect.catchTag("SqlError", (sqlError) =>
         Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
       ),
@@ -1343,6 +1402,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     Effect.provideService(Path.Path, path),
     Effect.provideService(ServerConfig, serverConfig),
     Effect.asVoid,
+    Effect.tap(() => refreshActivityIndex),
     Effect.tap(() =>
       Effect.log("orchestration projection pipeline bootstrapped").pipe(
         Effect.annotateLogs({ projectors: projectors.length }),
@@ -1374,4 +1434,5 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
+  Layer.provideMerge(ActivityIndexExportLive),
 );

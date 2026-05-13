@@ -11,6 +11,9 @@ import {
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
+const SIDECHAT_CONTEXT_MAX_CHARS = 12_000;
+const SIDECHAT_CONTEXT_MAX_MESSAGES = 16;
+const SIDECHAT_MESSAGE_MAX_CHARS = 1_800;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -24,12 +27,14 @@ export function buildLocalDraftThread(
     id: threadId,
     codexThreadId: null,
     projectId: draftThread.projectId,
+    sidechatSourceThreadId: draftThread.sidechatSourceThreadId ?? null,
     title: "New thread",
     model: fallbackModel,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
+    detailsLoaded: true,
     error,
     createdAt: draftThread.createdAt,
     latestTurn: null,
@@ -107,6 +112,76 @@ export function buildTemporaryWorktreeBranchName(): string {
   // Keep the 8-hex suffix shape for backend temporary-branch detection.
   const token = randomUUID().slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
+function truncateForSidechatContext(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 16)).trimEnd()}\n[truncated]`;
+}
+
+export function buildSidechatProviderMessage(input: {
+  userMessageText: string;
+  sourceThread: {
+    title: string;
+    messages: ReadonlyArray<Pick<ChatMessage, "role" | "text">>;
+  };
+}): string | null {
+  const sourceMessages = input.sourceThread.messages
+    .filter((message) => message.text.trim().length > 0)
+    .slice(-SIDECHAT_CONTEXT_MAX_MESSAGES);
+  if (sourceMessages.length === 0) {
+    return null;
+  }
+
+  const contextLines = sourceMessages.map((message) => {
+    const role =
+      message.role === "assistant" ? "Assistant" : message.role === "user" ? "User" : "System";
+    return `${role}: ${truncateForSidechatContext(message.text.trim(), SIDECHAT_MESSAGE_MAX_CHARS)}`;
+  });
+
+  const sourceContext = truncateForSidechatContext(
+    [`Source chat: ${input.sourceThread.title}`, "", ...contextLines].join("\n"),
+    SIDECHAT_CONTEXT_MAX_CHARS,
+  );
+
+  return [
+    "Use this source chat context as background for this sidechat. The user cannot see this context block, so answer naturally and do not mention that hidden context was attached unless it matters.",
+    "",
+    "<source_chat_context>",
+    sourceContext,
+    "</source_chat_context>",
+    "",
+    "Current user request:",
+    input.userMessageText,
+  ].join("\n");
+}
+
+export function buildAgentReviewPrompt(input: {
+  sourceThreadTitle: string;
+  assistantMessageText: string;
+}): string {
+  return [
+    `Review this response from "${input.sourceThreadTitle}" and reply with feedback the original agent can act on.`,
+    "",
+    "Focus on correctness, risks, regressions, missing tests, and the next concrete step. Be concise, but include enough detail for the original agent to continue without guessing.",
+    "",
+    "<assistant_response_to_review>",
+    input.assistantMessageText.trim(),
+    "</assistant_response_to_review>",
+  ].join("\n");
+}
+
+export function buildAgentReviewRelayPrompt(input: {
+  reviewThreadTitle: string;
+  reviewerMessageText: string;
+}): string {
+  return [
+    `Reviewer feedback from "${input.reviewThreadTitle}":`,
+    "",
+    input.reviewerMessageText.trim(),
+    "",
+    "Please respond to this review in the original thread. Address the feedback directly, call out anything you disagree with, and continue the work from here.",
+  ].join("\n");
 }
 
 export function cloneComposerImageForRetry(

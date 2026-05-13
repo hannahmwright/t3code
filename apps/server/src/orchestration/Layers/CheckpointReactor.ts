@@ -8,7 +8,7 @@ import {
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Option, Stream } from "effect";
+import { Cause, Effect, Layer, Option, Ref, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
@@ -63,11 +63,54 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
 const serverCommandId = (tag: string): CommandId =>
   CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
+function isProviderDiffCheckpointRef(value: string): boolean {
+  return value.startsWith("provider-diff:");
+}
+
+function checkpointStatusFromSettledSessionStatus(
+  status: Extract<
+    OrchestrationEvent,
+    { type: "thread.session-set" }
+  >["payload"]["session"]["status"],
+): "ready" | "missing" | "error" {
+  switch (status) {
+    case "error":
+      return "error";
+    case "interrupted":
+    case "stopped":
+      return "missing";
+    default:
+      return "ready";
+  }
+}
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
+  const activeTurnIdsByThreadRef = yield* Ref.make(new Map<string, TurnId>());
+
+  const rememberActiveTurn = (threadId: ThreadId, turnId: TurnId) =>
+    Ref.update(activeTurnIdsByThreadRef, (activeTurnIdsByThread) => {
+      const next = new Map(activeTurnIdsByThread);
+      next.set(threadId, turnId);
+      return next;
+    });
+
+  const takeRememberedActiveTurn = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const activeTurnIdsByThread = yield* Ref.get(activeTurnIdsByThreadRef);
+      const turnId = activeTurnIdsByThread.get(threadId) ?? null;
+      if (turnId !== null) {
+        yield* Ref.update(activeTurnIdsByThreadRef, (current) => {
+          const next = new Map(current);
+          next.delete(threadId);
+          return next;
+        });
+      }
+      return turnId;
+    });
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -154,7 +197,7 @@ const make = Effect.gen(function* () {
   // a git repository.
   const resolveCheckpointCwd = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
-    readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
+    readonly thread: { readonly projectId: ProjectId | null; readonly worktreePath: string | null };
     readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined> {
@@ -399,7 +442,7 @@ const make = Effect.gen(function* () {
     const { threadId, turnId, checkpointTurnCount, status } = event.payload;
 
     // Only replace placeholders; skip events from our own real captures.
-    if (status !== "missing") {
+    if (status !== "missing" || !isProviderDiffCheckpointRef(event.payload.checkpointRef)) {
       return;
     }
 
@@ -425,6 +468,14 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // Codex and Claude can emit turn.diff.updated before the provider turn is
+    // actually complete. Keep the placeholder in the read model, but delay the
+    // real checkpoint and "turn finished" notification until the session settles.
+    if (thread.session?.status === "running" && thread.session.activeTurnId !== null) {
+      yield* rememberActiveTurn(threadId, thread.session.activeTurnId);
+      return;
+    }
+
     const checkpointCwd = yield* resolveCheckpointCwd({
       threadId,
       thread,
@@ -444,6 +495,60 @@ const make = Effect.gen(function* () {
       status: "ready",
       assistantMessageId: event.payload.assistantMessageId ?? undefined,
       createdAt: event.payload.completedAt,
+    });
+  });
+
+  const capturePlaceholderAfterSessionSettled = Effect.fnUntraced(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.session-set" }>,
+  ) {
+    if (event.payload.session.activeTurnId !== null) {
+      yield* rememberActiveTurn(event.payload.threadId, event.payload.session.activeTurnId);
+      return;
+    }
+    if (event.payload.session.status === "running") {
+      return;
+    }
+
+    const turnId = yield* takeRememberedActiveTurn(event.payload.threadId);
+    if (turnId === null) {
+      return;
+    }
+
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    const placeholder = thread.checkpoints.find(
+      (checkpoint) =>
+        checkpoint.turnId === turnId &&
+        checkpoint.status === "missing" &&
+        isProviderDiffCheckpointRef(checkpoint.checkpointRef),
+    );
+    if (!placeholder) {
+      return;
+    }
+
+    const checkpointCwd = yield* resolveCheckpointCwd({
+      threadId: thread.id,
+      thread,
+      projects: readModel.projects,
+      preferSessionRuntime: true,
+    });
+    if (!checkpointCwd) {
+      return;
+    }
+
+    yield* captureAndDispatchCheckpoint({
+      threadId: thread.id,
+      turnId,
+      thread,
+      cwd: checkpointCwd,
+      turnCount: placeholder.checkpointTurnCount,
+      status: checkpointStatusFromSettledSessionStatus(event.payload.session.status),
+      assistantMessageId: placeholder.assistantMessageId ?? undefined,
+      createdAt: event.payload.session.updatedAt,
     });
   });
 
@@ -685,6 +790,20 @@ const make = Effect.gen(function* () {
   });
 
   const processDomainEvent = Effect.fnUntraced(function* (event: OrchestrationEvent) {
+    if (event.type === "thread.session-set") {
+      yield* capturePlaceholderAfterSessionSettled(event).pipe(
+        Effect.catch((error) =>
+          appendCaptureFailureActivity({
+            threadId: event.payload.threadId,
+            turnId: event.payload.session.activeTurnId,
+            detail: error.message,
+            createdAt: new Date().toISOString(),
+          }).pipe(Effect.catch(() => Effect.void)),
+        ),
+      );
+      return;
+    }
+
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
       return;
@@ -725,6 +844,10 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = Effect.fnUntraced(function* (event: ProviderRuntimeEvent) {
     if (event.type === "turn.started") {
+      const turnId = toTurnId(event.turnId);
+      if (turnId) {
+        yield* rememberActiveTurn(event.threadId, turnId);
+      }
       yield* ensurePreTurnBaselineFromTurnStart(event);
       return;
     }
@@ -773,7 +896,8 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
           event.type !== "thread.checkpoint-revert-requested" &&
-          event.type !== "thread.turn-diff-completed"
+          event.type !== "thread.turn-diff-completed" &&
+          event.type !== "thread.session-set"
         ) {
           return Effect.void;
         }

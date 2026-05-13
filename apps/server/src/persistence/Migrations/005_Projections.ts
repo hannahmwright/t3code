@@ -78,6 +78,7 @@ export default Effect.gen(function* () {
       turn_id TEXT,
       pending_message_id TEXT,
       assistant_message_id TEXT,
+      notification_target_endpoint TEXT,
       state TEXT NOT NULL,
       requested_at TEXT NOT NULL,
       started_at TEXT,

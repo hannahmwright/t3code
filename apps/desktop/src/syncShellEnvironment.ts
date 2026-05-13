@@ -1,5 +1,7 @@
 import { readEnvironmentFromLoginShell, ShellEnvironmentReader } from "@t3tools/shared/shell";
 
+const SHELL_ENVIRONMENT_KEYS = ["PATH", "SSH_AUTH_SOCK"];
+
 export function syncShellEnvironment(
   env: NodeJS.ProcessEnv = process.env,
   options: {
@@ -11,10 +13,10 @@ export function syncShellEnvironment(
 
   try {
     const shell = env.SHELL ?? "/bin/zsh";
-    const shellEnvironment = (options.readEnvironment ?? readEnvironmentFromLoginShell)(shell, [
-      "PATH",
-      "SSH_AUTH_SOCK",
-    ]);
+    const shellEnvironment = (options.readEnvironment ?? readEnvironmentFromLoginShell)(
+      shell,
+      SHELL_ENVIRONMENT_KEYS,
+    );
 
     if (shellEnvironment.PATH) {
       env.PATH = shellEnvironment.PATH;

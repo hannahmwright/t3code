@@ -2,6 +2,7 @@ import {
   CommandId,
   type ContextMenuItem,
   EventId,
+  MessageId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   type OrchestrationEvent,
@@ -134,6 +135,7 @@ beforeEach(() => {
   transportState = "connecting";
   nextPushSequence = 1;
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
+  Reflect.deleteProperty(getWindowForTest(), "localStorage");
 });
 
 afterEach(() => {
@@ -366,6 +368,43 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("attaches the current browser push endpoint to turn-start commands", async () => {
+    requestMock.mockResolvedValue(undefined);
+    Object.defineProperty(getWindowForTest(), "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => "https://push.example/subscription-1"),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      },
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const command = {
+      type: "thread.turn.start",
+      commandId: CommandId.makeUnsafe("cmd-turn-1"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      message: {
+        messageId: MessageId.makeUnsafe("message-1"),
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-02-24T00:00:00.000Z",
+    } as const;
+    await api.orchestration.dispatchCommand(command);
+
+    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      command: {
+        ...command,
+        notificationTargetEndpoint: "https://push.example/subscription-1",
+      },
+    });
+  });
+
   it("forwards workspace file writes to the websocket project method", async () => {
     requestMock.mockResolvedValue({ relativePath: "plan.md" });
     const { createWsNativeApi } = await import("./wsNativeApi");
@@ -470,8 +509,43 @@ describe("wsNativeApi", () => {
     const api = createWsNativeApi();
     await api.orchestration.getSnapshot();
 
-    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.getSnapshot, undefined, {
-      timeoutMs: 8_000,
+    expect(requestMock).toHaveBeenCalledWith(
+      ORCHESTRATION_WS_METHODS.getSnapshot,
+      { detailMode: "active" },
+      { timeoutMs: 8_000 },
+    );
+  });
+
+  it("requests a full thread snapshot for lazy thread hydration", async () => {
+    requestMock.mockResolvedValue({
+      thread: {
+        id: "thread-1",
+        projectId: "project-1",
+        title: "Thread",
+        model: "gpt-5-codex",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: "2026-02-24T00:00:00.000Z",
+        updatedAt: "2026-02-24T00:00:00.000Z",
+        deletedAt: null,
+        messages: [],
+        proposedPlans: [],
+        activities: [],
+        checkpoints: [],
+        session: null,
+        detailsLoaded: true,
+      },
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.orchestration.getThreadSnapshot({ threadId: ThreadId.makeUnsafe("thread-1") });
+
+    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.getThreadSnapshot, {
+      threadId: "thread-1",
     });
   });
 

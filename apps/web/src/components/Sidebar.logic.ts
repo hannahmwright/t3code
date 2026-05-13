@@ -306,13 +306,18 @@ export function resolveAdjacentThreadId<T>(input: {
 export function groupProjectsForSidebar(input: {
   projects: readonly Project[];
   workbooks?: readonly Workbook[];
+  allProjects?: readonly Project[];
 }): SidebarProjectGroup[] {
   const projects = input.projects;
   const workbooks = input.workbooks ?? [];
+  const allProjects = input.allProjects ?? projects;
   const groupedProjects: SidebarProjectGroup[] = [];
   const groupedProjectIndexByWorkbookId = new Map<string, number>();
   const workbookById = new Map(workbooks.map((workbook) => [workbook.id, workbook] as const));
   const seenWorkbookIds = new Set<Workbook["id"]>();
+  const workbookIdsWithAnyProjects = new Set(
+    allProjects.flatMap((project) => (project.workbookId ? [project.workbookId] : [])),
+  );
 
   for (const project of projects) {
     const workbook = project.workbookId ? (workbookById.get(project.workbookId) ?? null) : null;
@@ -356,7 +361,10 @@ export function groupProjectsForSidebar(input: {
   }
 
   const emptyWorkbooks = workbooks
-    .filter((workbook) => !seenWorkbookIds.has(workbook.id))
+    .filter(
+      (workbook) =>
+        !seenWorkbookIds.has(workbook.id) && !workbookIdsWithAnyProjects.has(workbook.id),
+    )
     .toSorted((left, right) => {
       const leftTimestamp = Date.parse(left.createdAt ?? "");
       const rightTimestamp = Date.parse(right.createdAt ?? "");
@@ -498,6 +506,9 @@ export function sortProjectsForSidebar<TProject extends SidebarProject, TThread 
 
   const threadsByProjectId = new Map<string, TThread[]>();
   for (const thread of threads) {
+    if (thread.projectId === null) {
+      continue;
+    }
     const existing = threadsByProjectId.get(thread.projectId) ?? [];
     existing.push(thread);
     threadsByProjectId.set(thread.projectId, existing);

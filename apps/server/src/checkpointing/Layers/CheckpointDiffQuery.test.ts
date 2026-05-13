@@ -126,6 +126,7 @@ describe("CheckpointDiffQueryLive", () => {
       Layer.provideMerge(
         Layer.succeed(ProjectionSnapshotQuery, {
           getSnapshot: () => Effect.succeed(snapshot),
+          getThreadSnapshot: () => Effect.die(new Error("getThreadSnapshot should not be called")),
         }),
       ),
     );
@@ -181,6 +182,7 @@ describe("CheckpointDiffQueryLive", () => {
               threads: [],
               updatedAt: "2026-01-01T00:00:00.000Z",
             } satisfies OrchestrationReadModel),
+          getThreadSnapshot: () => Effect.die(new Error("getThreadSnapshot should not be called")),
         }),
       ),
     );

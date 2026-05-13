@@ -22,6 +22,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "../codexCliVersion";
+import { fixPath } from "../../os-jank";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
@@ -592,6 +593,7 @@ export const checkClaudeProviderStatus: Effect.Effect<
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
+    yield* Effect.sync(fixPath);
     const statusesFiber = yield* Effect.all([checkCodexProviderStatus, checkClaudeProviderStatus], {
       concurrency: "unbounded",
     }).pipe(Effect.forkScoped);

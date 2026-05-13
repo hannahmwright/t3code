@@ -11,16 +11,18 @@ import {
   buildTurnCompletionNotificationBody,
   getTurnCompletionNotificationPreview,
 } from "@t3tools/shared/notifications";
-import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import webPush from "web-push";
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery";
 import { BrowserPushSubscriptionRepositoryLive } from "../../persistence/Layers/BrowserPushSubscriptions.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import {
   BrowserPushSubscriptionRepository,
   type BrowserPushSubscriptionRecord,
 } from "../../persistence/Services/BrowserPushSubscriptions.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   PushNotificationService,
   PushNotificationServiceError,
@@ -167,6 +169,34 @@ export function shouldNotifyForTurnDiffCompletionStatus(
   return status !== "missing";
 }
 
+export function shouldNotifyForTurnCompletionSnapshot(input: {
+  readonly event: Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }>;
+  readonly thread: {
+    readonly latestTurn: {
+      readonly turnId: string;
+      readonly completedAt: string | null;
+    } | null;
+    readonly session: {
+      readonly status: string;
+      readonly activeTurnId: string | null;
+    } | null;
+  } | null;
+}): boolean {
+  if (input.thread === null) {
+    return false;
+  }
+  if (input.thread.latestTurn?.turnId !== input.event.payload.turnId) {
+    return false;
+  }
+  if (input.thread.latestTurn.completedAt === null) {
+    return false;
+  }
+  if (input.thread.session?.status === "running" && input.thread.session.activeTurnId !== null) {
+    return false;
+  }
+  return true;
+}
+
 function formatPushFailureReason(cause: unknown): string {
   const actualCause =
     typeof cause === "object" && cause !== null && "cause" in cause ? cause.cause : cause;
@@ -221,6 +251,7 @@ export const makePushNotificationServiceLive = (options: PushNotificationService
       const path = yield* Path.Path;
       const { stateDir } = yield* ServerConfig;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+      const projectionTurnRepository = yield* ProjectionTurnRepository;
       const repository = yield* BrowserPushSubscriptionRepository;
 
       const generateVapidKeys =
@@ -382,12 +413,27 @@ export const makePushNotificationServiceLive = (options: PushNotificationService
           if (subscriptions.length === 0) {
             return;
           }
+          const completedTurn = yield* projectionTurnRepository
+            .getByTurnId({
+              threadId: event.payload.threadId,
+              turnId: event.payload.turnId,
+            })
+            .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+          const notificationTargetEndpoint = Option.isSome(completedTurn)
+            ? completedTurn.value.notificationTargetEndpoint
+            : null;
+          if (!notificationTargetEndpoint) {
+            return;
+          }
 
           const snapshot = yield* projectionSnapshotQuery
             .getSnapshot()
             .pipe(Effect.catch(() => Effect.succeed(null)));
           const thread =
             snapshot?.threads.find((candidate) => candidate.id === event.payload.threadId) ?? null;
+          if (!shouldNotifyForTurnCompletionSnapshot({ event, thread })) {
+            return;
+          }
           const project =
             thread === null
               ? null
@@ -407,7 +453,9 @@ export const makePushNotificationServiceLive = (options: PushNotificationService
           });
 
           yield* Effect.forEach(
-            subscriptions,
+            subscriptions.filter(
+              (record) => record.subscription.endpoint === notificationTargetEndpoint,
+            ),
             (record: BrowserPushSubscriptionRecord) =>
               Effect.tryPromise({
                 try: () =>
@@ -473,6 +521,9 @@ export const makePushNotificationServiceLive = (options: PushNotificationService
         notifyTurnCompleted,
       } satisfies PushNotificationServiceShape;
     }),
-  ).pipe(Layer.provide(BrowserPushSubscriptionRepositoryLive));
+  ).pipe(
+    Layer.provide(BrowserPushSubscriptionRepositoryLive),
+    Layer.provide(ProjectionTurnRepositoryLive),
+  );
 
 export const PushNotificationServiceLive = makePushNotificationServiceLive();

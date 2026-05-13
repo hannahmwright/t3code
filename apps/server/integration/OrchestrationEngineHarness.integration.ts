@@ -248,6 +248,7 @@ export const makeOrchestrationIntegrationHarness = (
 
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -291,6 +292,7 @@ export const makeOrchestrationIntegrationHarness = (
       OrchestrationProjectionSnapshotQueryLive,
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
+      ProviderSessionRuntimeRepositoryLive,
       checkpointStoreLayer,
       providerLayer,
       RuntimeReceiptBusLive,

@@ -6,7 +6,12 @@
  *
  * @module ProjectionSnapshotQuery
  */
-import type { OrchestrationReadModel } from "@t3tools/contracts";
+import type {
+  OrchestrationReadModel,
+  OrchestrationSnapshotDetailMode,
+  OrchestrationThread,
+  ThreadId,
+} from "@t3tools/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
@@ -22,7 +27,16 @@ export interface ProjectionSnapshotQueryShape {
    * Rehydrates from projection tables and derives snapshot sequence from
    * projector cursor state.
    */
-  readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
+  readonly getSnapshot: (input?: {
+    readonly detailMode?: OrchestrationSnapshotDetailMode | undefined;
+  }) => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
+
+  /**
+   * Read one fully hydrated thread from the projection tables.
+   */
+  readonly getThreadSnapshot: (
+    threadId: ThreadId,
+  ) => Effect.Effect<{ readonly thread: OrchestrationThread }, ProjectionRepositoryError>;
 }
 
 /**

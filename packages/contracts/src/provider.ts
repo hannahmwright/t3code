@@ -93,6 +93,22 @@ export const ProviderStopSessionInput = Schema.Struct({
 });
 export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
 
+export const ProviderGoalSetInput = Schema.Struct({
+  threadId: ThreadId,
+  objective: TrimmedNonEmptyString,
+});
+export type ProviderGoalSetInput = typeof ProviderGoalSetInput.Type;
+
+export const ProviderGoalGetInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ProviderGoalGetInput = typeof ProviderGoalGetInput.Type;
+
+export const ProviderGoalClearInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ProviderGoalClearInput = typeof ProviderGoalClearInput.Type;
+
 export const ProviderRespondToRequestInput = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,

@@ -20,6 +20,7 @@ import { readNativeApi } from "./nativeApi";
 import { resolvePrimaryEnvironmentHttpBaseUrl } from "./primaryEnvironment";
 import { formatElapsed, isLatestTurnSettled } from "./session-logic";
 import { useStore } from "./store";
+import { setTurnNotificationTargetEndpoint } from "./turnNotificationTarget";
 import type { Project, Thread } from "./types";
 import { useBrowserNotificationPermission } from "./useBrowserNotificationPermission";
 
@@ -229,6 +230,7 @@ export function TurnCompletionNotifications() {
           remotePushEndpointRef.current ??
           (await removeBrowserPushSubscription().catch(() => null));
         remotePushEndpointRef.current = null;
+        setTurnNotificationTargetEndpoint(null);
         if (endpoint) {
           await api.notifications.deletePushSubscription({ endpoint }).catch(() => undefined);
         }
@@ -256,6 +258,7 @@ export function TurnCompletionNotifications() {
       }
 
       remotePushEndpointRef.current = subscription.endpoint;
+      setTurnNotificationTargetEndpoint(subscription.endpoint);
       remotePushReadyRef.current = true;
     })();
 
@@ -278,7 +281,7 @@ export function TurnCompletionNotifications() {
     const candidates = threads.flatMap((thread) => {
       const candidate = getTurnCompletionNotificationCandidate({
         thread,
-        project: projectsById.get(thread.projectId) ?? null,
+        project: thread.projectId ? (projectsById.get(thread.projectId) ?? null) : null,
         origin: resolvePrimaryEnvironmentHttpBaseUrl(),
       });
       nextCompletionKeyByThreadId.set(thread.id, candidate?.key ?? null);

@@ -6,10 +6,10 @@ import {
 } from "@t3tools/contracts";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
+import { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
@@ -46,22 +46,12 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   isGitRepo,
   openInCwd,
-  activeProjectScripts,
-  preferredScriptId,
   keybindings,
   availableEditors,
   showDesktopActions,
-  terminalAvailable,
-  terminalOpen,
-  terminalToggleShortcutLabel,
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
-  onRunProjectScript,
-  onAddProjectScript,
-  onUpdateProjectScript,
-  onDeleteProjectScript,
-  onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
@@ -100,18 +90,7 @@ export const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
       </div>
-      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
-        {showDesktopActions && activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        )}
+      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 pr-9 @sm/header-actions:gap-3">
         {showDesktopActions && activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}
@@ -121,32 +100,6 @@ export const ChatHeader = memo(function ChatHeader({
         )}
         {showDesktopActions && activeProjectName && (
           <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />
-        )}
-        {showDesktopActions && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  className="shrink-0"
-                  pressed={terminalOpen}
-                  onPressedChange={onToggleTerminal}
-                  aria-label="Toggle terminal drawer"
-                  variant="outline"
-                  size="xs"
-                  disabled={!terminalAvailable}
-                >
-                  <TerminalSquareIcon className="size-3" />
-                </Toggle>
-              }
-            />
-            <TooltipPopup side="bottom">
-              {!terminalAvailable
-                ? "Terminal is unavailable until this thread has an active project."
-                : terminalToggleShortcutLabel
-                  ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                  : "Toggle terminal drawer"}
-            </TooltipPopup>
-          </Tooltip>
         )}
         <Tooltip>
           <TooltipTrigger

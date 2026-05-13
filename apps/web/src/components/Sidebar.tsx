@@ -8,10 +8,12 @@ import {
   GitPullRequestIcon,
   PlusIcon,
   RocketIcon,
+  SearchIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import {
@@ -21,6 +23,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent,
 } from "react";
 import {
@@ -56,6 +59,7 @@ import {
 } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { ARM64_INTEL_BUILD_ALERT_KEY, useDismissedAlert } from "../lib/alertDismissal";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   cn,
@@ -142,11 +146,19 @@ import {
 } from "./Sidebar.logic";
 import { buildProjectThemeStyle, normalizeProjectAccentColor } from "../projectTheme";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  serializeThreadDragPayload,
+  serializeThreadDragText,
+  THREAD_DRAG_MIME,
+} from "./chat-drop-overlay/ChatPaneDropOverlay";
+import { matchSidebarSearchThreads } from "./SidebarSearch.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_EXPANDED_WORKBOOKS_STORAGE_KEY = "t3code:sidebar:expanded-workbooks:v1";
 const SIDEBAR_EXPANDED_THREAD_LISTS_STORAGE_KEY = "t3code:sidebar:expanded-thread-lists:v1";
+const SIDEBAR_EXPANDED_PROJECT_SECTIONS_STORAGE_KEY = "t3code:sidebar:expanded-project-sections:v1";
+const SET_ASIDE_PROJECT_SECTION_KEY = "set-aside";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -430,6 +442,7 @@ export default function Sidebar() {
   const threadsHydrated = useStore((store) => store.threadsHydrated);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
+  const setProjectSetAside = useStore((store) => store.setProjectSetAside);
   const reorderProjects = useStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftThreadByProjectId = useComposerDraftStore(
@@ -471,6 +484,9 @@ export default function Sidebar() {
   const [newProjectWorkbookId, setNewProjectWorkbookId] = useState<WorkbookId | null>(null);
   const [newProjectGroupName, setNewProjectGroupName] = useState("");
   const [newProjectGroupEmoji, setNewProjectGroupEmoji] = useState("");
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [looseThreadSectionExpanded, setLooseThreadSectionExpanded] = useState(true);
+  const [looseThreadListExpanded, setLooseThreadListExpanded] = useState(false);
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -491,6 +507,9 @@ export default function Sidebar() {
   >(
     () =>
       readSidebarExpandedIds(SIDEBAR_EXPANDED_THREAD_LISTS_STORAGE_KEY) as ReadonlySet<ProjectId>,
+  );
+  const [expandedProjectSectionKeys, setExpandedProjectSectionKeys] = useState<ReadonlySet<string>>(
+    () => readSidebarExpandedIds(SIDEBAR_EXPANDED_PROJECT_SECTIONS_STORAGE_KEY),
   );
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
@@ -515,7 +534,10 @@ export default function Sidebar() {
       threads.map((thread) => ({
         threadId: thread.id,
         branch: thread.branch,
-        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
+        cwd:
+          thread.worktreePath ??
+          (thread.projectId ? projectCwdById.get(thread.projectId) : null) ??
+          null,
       })),
     [projectCwdById, threads],
   );
@@ -600,6 +622,13 @@ export default function Sidebar() {
     );
   }, [expandedThreadListsByProject]);
 
+  useEffect(() => {
+    persistSidebarExpandedIds(
+      SIDEBAR_EXPANDED_PROJECT_SECTIONS_STORAGE_KEY,
+      expandedProjectSectionKeys,
+    );
+  }, [expandedProjectSectionKeys]);
+
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
     event.stopPropagation();
@@ -668,7 +697,7 @@ export default function Sidebar() {
 
       const api = readNativeApi();
       if (!api) {
-        throw new Error("The workbook service is unavailable.");
+        throw new Error("The workspace service is unavailable.");
       }
       const workbookId = newWorkbookId();
       const createdAt = new Date().toISOString();
@@ -1000,7 +1029,7 @@ export default function Sidebar() {
     if (nextGroupName.length === 0) {
       toastManager.add({
         type: "warning",
-        title: "Workbook name cannot be empty",
+        title: "Workspace name cannot be empty",
       });
       return;
     }
@@ -1029,7 +1058,7 @@ export default function Sidebar() {
       } else {
         const workbook = workbookById.get(workbookId);
         if (!workbook) {
-          throw new Error("That workbook no longer exists.");
+          throw new Error("That workspace no longer exists.");
         }
         if (workbook.name !== nextGroupName || (workbook.emoji ?? "") !== nextGroupEmoji) {
           await api.orchestration.dispatchCommand({
@@ -1100,8 +1129,8 @@ export default function Sidebar() {
         type: "error",
         title:
           editingProjectGroup.mode === "create"
-            ? "Failed to create workbook"
-            : "Failed to update workbook",
+            ? "Failed to create workspace"
+            : "Failed to update workspace",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     } finally {
@@ -1129,8 +1158,8 @@ export default function Sidebar() {
 
       const confirmed = await api.dialogs.confirm(
         projectIds.length === 0
-          ? `Delete workbook "${groupName}"?`
-          : `Remove workbook grouping for "${groupName}"?`,
+          ? `Delete workspace "${groupName}"?`
+          : `Remove workspace grouping for "${groupName}"?`,
       );
       if (!confirmed) {
         return;
@@ -1156,7 +1185,7 @@ export default function Sidebar() {
       } catch (error) {
         toastManager.add({
           type: "error",
-          title: "Failed to update workbook",
+          title: "Failed to update workspace",
           description: error instanceof Error ? error.message : "An error occurred.",
         });
       }
@@ -1279,7 +1308,9 @@ export default function Sidebar() {
         threadId,
       });
       clearComposerDraftForThread(threadId);
-      clearProjectDraftThreadById(thread.projectId, thread.id);
+      if (thread.projectId) {
+        clearProjectDraftThreadById(thread.projectId, thread.id);
+      }
       clearTerminalState(threadId);
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
@@ -1369,10 +1400,13 @@ export default function Sidebar() {
       const thread = threads.find((t) => t.id === threadId);
       if (!thread) return;
       const threadWorkspacePath =
-        thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
+        thread.worktreePath ??
+        (thread.projectId ? projectCwdById.get(thread.projectId) : null) ??
+        null;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
+          { id: "sidechat", label: "New sidechat" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -1385,6 +1419,16 @@ export default function Sidebar() {
         setRenamingThreadId(threadId);
         setRenamingTitle(thread.title);
         renamingCommittedRef.current = false;
+        return;
+      }
+
+      if (clicked === "sidechat") {
+        await handleNewThread(thread.projectId, {
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          envMode: thread.worktreePath ? "worktree" : "local",
+          sidechatSourceThreadId: thread.id,
+        });
         return;
       }
 
@@ -1427,6 +1471,7 @@ export default function Sidebar() {
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
+      handleNewThread,
       markThreadUnread,
       projectCwdById,
       threads,
@@ -1529,9 +1574,15 @@ export default function Sidebar() {
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
+      const project = projects.find((entry) => entry.id === projectId);
+      if (!project) return;
       const clicked = await api.contextMenu.show(
         [
           { id: "edit", label: "Edit project" },
+          {
+            id: "toggle-set-aside",
+            label: project.setAside ? "Bring back project" : "Set project aside",
+          },
           { id: "delete", label: "Remove project", destructive: true },
         ],
         position,
@@ -1540,10 +1591,40 @@ export default function Sidebar() {
         openProjectEditor(projectId);
         return;
       }
+      if (clicked === "toggle-set-aside") {
+        const nextSetAside = !project.setAside;
+        setProjectSetAside(projectId, nextSetAside);
+        if (nextSetAside) {
+          setExpandedProjectSectionKeys((current) => {
+            if (current.has(SET_ASIDE_PROJECT_SECTION_KEY)) {
+              return current;
+            }
+            const next = new Set(current);
+            next.add(SET_ASIDE_PROJECT_SECTION_KEY);
+            return next;
+          });
+        }
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "project.meta.update",
+            commandId: newCommandId(),
+            projectId,
+            setAside: nextSetAside,
+          });
+        } catch (error) {
+          setProjectSetAside(projectId, !nextSetAside);
+          const message =
+            error instanceof Error ? error.message : "Unknown error updating project.";
+          console.error("Failed to update project set-aside state", { projectId, error });
+          toastManager.add({
+            type: "error",
+            title: `Failed to update "${project.name}"`,
+            description: message,
+          });
+        }
+        return;
+      }
       if (clicked !== "delete") return;
-
-      const project = projects.find((entry) => entry.id === projectId);
-      if (!project) return;
 
       const projectThreads = threads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length > 0) {
@@ -1585,6 +1666,7 @@ export default function Sidebar() {
       getDraftThreadByProjectId,
       openProjectEditor,
       projects,
+      setProjectSetAside,
       threads,
     ],
   );
@@ -1603,10 +1685,10 @@ export default function Sidebar() {
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "edit", label: "Edit workbook" },
+          { id: "edit", label: "Edit workspace" },
           {
             id: "ungroup",
-            label: projectIds.length === 0 ? "Delete workbook" : "Ungroup projects",
+            label: projectIds.length === 0 ? "Delete workspace" : "Ungroup projects",
             destructive: true,
           },
         ],
@@ -1648,8 +1730,10 @@ export default function Sidebar() {
       dragInProgressRef.current = false;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const activeProject = projects.find((project) => project.id === active.id);
-      const overProject = projects.find((project) => project.id === over.id);
+      const activeProject = projects.find(
+        (project) => project.id === active.id && !project.setAside,
+      );
+      const overProject = projects.find((project) => project.id === over.id && !project.setAside);
       if (!activeProject || !overProject) return;
       reorderProjects(activeProject.id, overProject.id);
     },
@@ -1697,18 +1781,89 @@ export default function Sidebar() {
     () => sortProjectsForSidebar(projects, threads, appSettings.sidebarProjectSortOrder),
     [appSettings.sidebarProjectSortOrder, projects, threads],
   );
+  const activeProjects = useMemo(
+    () => sortedProjects.filter((project) => !project.setAside),
+    [sortedProjects],
+  );
+  const setAsideProjects = useMemo(
+    () => sortedProjects.filter((project) => project.setAside),
+    [sortedProjects],
+  );
+  const looseThreads = useMemo(
+    () =>
+      sortThreadsForSidebar(
+        threads.filter((thread) => thread.projectId === null),
+        "updated_at",
+      ),
+    [threads],
+  );
+  const visibleLooseThreads = useMemo(
+    () =>
+      !looseThreadSectionExpanded
+        ? []
+        : looseThreadListExpanded
+          ? looseThreads
+          : looseThreads.slice(0, 3),
+    [looseThreadListExpanded, looseThreadSectionExpanded, looseThreads],
+  );
+  const hasHiddenLooseThreads =
+    looseThreadSectionExpanded && looseThreads.length > visibleLooseThreads.length;
+  const normalizedSidebarSearchQuery = sidebarSearchQuery.trim().toLowerCase();
+  const searchThreadResults = useMemo(() => {
+    if (!normalizedSidebarSearchQuery) {
+      return [];
+    }
+    const projectNameById = new Map(projects.map((project) => [project.id, project.name]));
+    return matchSidebarSearchThreads(
+      threads.map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+        projectId: thread.projectId,
+        projectName: thread.projectId ? (projectNameById.get(thread.projectId) ?? "") : "Chats",
+        provider: thread.session?.provider ?? "codex",
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        messages: thread.messages,
+      })),
+      normalizedSidebarSearchQuery,
+    ).slice(0, 20);
+  }, [normalizedSidebarSearchQuery, projects, threads]);
+  const isSetAsideProjectSectionExpanded = expandedProjectSectionKeys.has(
+    SET_ASIDE_PROJECT_SECTION_KEY,
+  );
   const groupedProjects = useMemo(
-    () => groupProjectsForSidebar({ projects: sortedProjects, workbooks }),
-    [sortedProjects, workbooks],
+    () =>
+      groupProjectsForSidebar({ projects: activeProjects, workbooks, allProjects: sortedProjects }),
+    [activeProjects, sortedProjects, workbooks],
+  );
+  const groupedSetAsideProjects = useMemo(
+    () =>
+      groupProjectsForSidebar({
+        projects: setAsideProjects,
+        workbooks,
+        allProjects: sortedProjects,
+      }),
+    [setAsideProjects, sortedProjects, workbooks],
   );
   const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
   const routeTerminalOpen = routeThreadId
     ? selectThreadTerminalState(terminalStateByThreadId, routeThreadId).terminalOpen
     : false;
-  const visibleSidebarThreadIds = useMemo(
-    () =>
-      getVisibleSidebarThreadIds(
-        sortedProjects.map((project) => {
+  const visibleSidebarThreadIds = useMemo(() => {
+    if (normalizedSidebarSearchQuery) {
+      return searchThreadResults.map((match) => match.thread.id);
+    }
+    return getVisibleSidebarThreadIds([
+      ...(looseThreads.length > 0
+        ? [
+            {
+              shouldShowThreadPanel: looseThreadSectionExpanded,
+              renderedThreadIds: visibleLooseThreads.map((thread) => thread.id),
+            },
+          ]
+        : []),
+      ...[...activeProjects, ...(isSetAsideProjectSectionExpanded ? setAsideProjects : [])].map(
+        (project) => {
           const projectThreads = sortThreadsForSidebar(
             threads.filter((thread) => thread.projectId === project.id),
             appSettings.sidebarThreadSortOrder,
@@ -1733,16 +1888,23 @@ export default function Sidebar() {
               ? [pinnedCollapsedThread.id]
               : visibleThreads.map((thread) => thread.id),
           };
-        }),
+        },
       ),
-    [
-      appSettings.sidebarThreadSortOrder,
-      expandedThreadListsByProject,
-      routeThreadId,
-      sortedProjects,
-      threads,
-    ],
-  );
+    ]);
+  }, [
+    appSettings.sidebarThreadSortOrder,
+    expandedThreadListsByProject,
+    isSetAsideProjectSectionExpanded,
+    normalizedSidebarSearchQuery,
+    routeThreadId,
+    searchThreadResults,
+    activeProjects,
+    setAsideProjects,
+    threads,
+    looseThreads,
+    looseThreadSectionExpanded,
+    visibleLooseThreads,
+  ]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -1797,6 +1959,185 @@ export default function Sidebar() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [keybindings, navigateToThread, routeTerminalOpen, routeThreadId, visibleSidebarThreadIds]);
+
+  function renderLooseThreadItem(thread: (typeof looseThreads)[number]) {
+    const isActive = routeThreadId === thread.id;
+    const isSelected = selectedThreadIds.has(thread.id);
+    const isHighlighted = isActive || isSelected;
+    const threadStatus = resolveThreadStatusPill({
+      thread,
+      hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
+      hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
+    });
+    const terminalStatus = terminalStatusFromRunningIds(
+      selectThreadTerminalState(terminalStateByThreadId, thread.id).runningTerminalIds,
+    );
+    const orderedThreadIds = looseThreads.map((entry) => entry.id);
+
+    return (
+      <SidebarMenuItem key={thread.id} className="w-full" data-thread-item>
+        <SidebarMenuButton
+          render={<div role="button" tabIndex={0} />}
+          size="sm"
+          draggable
+          isActive={isActive}
+          className={resolveThreadRowClassName({ isActive, isSelected })}
+          onDragStart={(event) => attachThreadDrag(event, thread.id)}
+          onClick={(event) => {
+            handleThreadClick(event, thread.id, orderedThreadIds);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            navigateToThread(thread.id);
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            if (selectedThreadIds.size > 0 && selectedThreadIds.has(thread.id)) {
+              void handleMultiSelectContextMenu({
+                x: event.clientX,
+                y: event.clientY,
+              });
+            } else {
+              if (selectedThreadIds.size > 0) {
+                clearSelection();
+              }
+              void handleThreadContextMenu(thread.id, {
+                x: event.clientX,
+                y: event.clientY,
+              });
+            }
+          }}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+            {threadStatus && (
+              <span className={`inline-flex items-center gap-1 text-xs ${threadStatus.colorClass}`}>
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
+                    threadStatus.pulse ? "animate-pulse" : ""
+                  }`}
+                />
+                <span className="hidden md:inline">{threadStatus.label}</span>
+              </span>
+            )}
+            {renamingThreadId === thread.id ? (
+              <input
+                ref={(el) => {
+                  if (el && renamingInputRef.current !== el) {
+                    renamingInputRef.current = el;
+                    el.focus();
+                    el.select();
+                  }
+                }}
+                className="min-w-0 flex-1 truncate rounded border border-ring bg-transparent px-1 py-0.5 text-sm outline-none"
+                value={renamingTitle}
+                onChange={(e) => setRenamingTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    renamingCommittedRef.current = true;
+                    void commitRename(thread.id, renamingTitle, thread.title);
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    renamingCommittedRef.current = true;
+                    cancelRename();
+                  }
+                }}
+                onBlur={() => {
+                  if (!renamingCommittedRef.current) {
+                    void commitRename(thread.id, renamingTitle, thread.title);
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-sm">{thread.title}</span>
+            )}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {terminalStatus && (
+              <span
+                role="img"
+                aria-label={terminalStatus.label}
+                title={terminalStatus.label}
+                className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              >
+                <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+              </span>
+            )}
+            <span
+              className={`text-xs ${
+                isHighlighted
+                  ? "text-foreground/72 dark:text-foreground/82"
+                  : "text-muted-foreground/40"
+              }`}
+            >
+              {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
+            </span>
+          </div>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
+  function attachThreadDrag(event: ReactDragEvent, threadId: ThreadId) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(THREAD_DRAG_MIME, serializeThreadDragPayload(threadId));
+    event.dataTransfer.setData("text/plain", serializeThreadDragText(threadId));
+  }
+
+  function renderSearchThreadItem(match: (typeof searchThreadResults)[number]) {
+    const thread = threads.find((entry) => entry.id === match.thread.id);
+    if (!thread) return null;
+    const isActive = routeThreadId === thread.id;
+    const project = thread.projectId
+      ? (projects.find((entry) => entry.id === thread.projectId) ?? null)
+      : null;
+    const projectLabel = project?.name ?? "Chats";
+
+    return (
+      <SidebarMenuItem key={thread.id} className="w-full" data-thread-item>
+        <SidebarMenuButton
+          render={<button type="button" />}
+          size="sm"
+          draggable
+          isActive={isActive}
+          className={resolveThreadRowClassName({
+            isActive,
+            isSelected: selectedThreadIds.has(thread.id),
+          })}
+          onDragStart={(event) => attachThreadDrag(event, thread.id)}
+          onClick={(event) => {
+            handleThreadClick(
+              event,
+              thread.id,
+              searchThreadResults.map((entry) => entry.thread.id),
+            );
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            void handleThreadContextMenu(thread.id, {
+              x: event.clientX,
+              y: event.clientY,
+            });
+          }}
+        >
+          <div className="flex min-w-0 flex-1 flex-col items-start">
+            <span className="min-w-0 max-w-full truncate text-sm">{thread.title}</span>
+            <span className="min-w-0 max-w-full truncate text-[11px] text-muted-foreground/55">
+              {projectLabel} · {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
+            </span>
+            {match.snippet ? (
+              <span className="mt-0.5 line-clamp-2 min-w-0 max-w-full text-left text-[11px] leading-snug text-muted-foreground/70">
+                {match.snippet}
+              </span>
+            ) : null}
+          </div>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
 
   function renderProjectItem(
     project: (typeof sortedProjects)[number],
@@ -1861,12 +2202,14 @@ export default function Sidebar() {
           <SidebarMenuSubButton
             render={<div role="button" tabIndex={0} />}
             size="sm"
+            draggable
             isActive={isActive}
             className={resolveThreadRowClassName({
               isActive,
               isSelected,
             })}
             style={activeProjectRowStyle}
+            onDragStart={(event) => attachThreadDrag(event, thread.id)}
             onClick={(event) => {
               handleThreadClick(event, thread.id, orderedProjectThreadIds);
             }}
@@ -2214,6 +2557,12 @@ export default function Sidebar() {
     desktopUpdateState && showArm64IntelBuildWarning
       ? getArm64IntelBuildWarningDescription(desktopUpdateState)
       : null;
+  const { dismissed: arm64IntelBuildWarningDismissed, dismiss: dismissArm64IntelBuildWarning } =
+    useDismissedAlert(
+      showArm64IntelBuildWarning && arm64IntelBuildWarningDescription
+        ? ARM64_INTEL_BUILD_ALERT_KEY
+        : null,
+    );
   const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonDisabled
     ? "cursor-not-allowed opacity-60"
     : "hover:bg-accent hover:text-foreground";
@@ -2321,6 +2670,18 @@ export default function Sidebar() {
     });
   }, []);
 
+  const toggleProjectSectionExpanded = useCallback((sectionKey: string) => {
+    setExpandedProjectSectionKeys((current) => {
+      const next = new Set(current);
+      if (next.has(sectionKey)) {
+        next.delete(sectionKey);
+      } else {
+        next.add(sectionKey);
+      }
+      return next;
+    });
+  }, []);
+
   const renderProjectGroupHeader = useCallback(
     (group: (typeof groupedProjects)[number]) => {
       if (!group.name || group.workbookId === null) {
@@ -2335,7 +2696,7 @@ export default function Sidebar() {
         <SidebarMenuItem className="group/workbook-header relative px-0 pb-1 pt-3">
           <SidebarMenuButton
             size="sm"
-            aria-label={`${isExpanded ? "Collapse" : "Expand"} workbook ${groupName}`}
+            aria-label={`${isExpanded ? "Collapse" : "Expand"} workspace ${groupName}`}
             aria-expanded={isExpanded}
             className="h-8 gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground/60 hover:bg-accent/60 hover:text-foreground"
             onClick={() => toggleWorkbookExpanded(group.key)}
@@ -2361,7 +2722,7 @@ export default function Sidebar() {
             <span className="truncate">{groupName}</span>
           </SidebarMenuButton>
           <SidebarMenuAction
-            aria-label={`Edit workbook ${groupName}`}
+            aria-label={`Edit workspace ${groupName}`}
             className="text-muted-foreground/60 opacity-0 hover:bg-accent/60 hover:text-foreground group-hover/workbook-header:opacity-100 focus-visible:opacity-100"
             onClick={(event) => {
               event.preventDefault();
@@ -2446,14 +2807,26 @@ export default function Sidebar() {
       )}
 
       <SidebarContent className="gap-0">
-        {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
+        {showArm64IntelBuildWarning &&
+        arm64IntelBuildWarningDescription &&
+        !arm64IntelBuildWarningDismissed ? (
           <SidebarGroup className="px-2 pt-2 pb-0">
             <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
               <TriangleAlertIcon />
               <AlertTitle>Intel build on Apple Silicon</AlertTitle>
               <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
-              {desktopUpdateButtonAction !== "none" ? (
-                <AlertAction>
+              <AlertAction>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 text-muted-foreground/60 hover:text-foreground"
+                  onClick={dismissArm64IntelBuildWarning}
+                  aria-label="Dismiss Apple Silicon build warning"
+                >
+                  <XIcon className="size-3.5" />
+                </Button>
+                {desktopUpdateButtonAction !== "none" ? (
                   <Button
                     size="xs"
                     variant="outline"
@@ -2464,12 +2837,101 @@ export default function Sidebar() {
                       ? "Download ARM build"
                       : "Install ARM build"}
                   </Button>
-                </AlertAction>
-              ) : null}
+                ) : null}
+              </AlertAction>
             </Alert>
           </SidebarGroup>
         ) : null}
-        <SidebarGroup className="px-2 py-2">
+        <SidebarGroup className="px-2 pb-1 pt-2">
+          <SidebarMenu className="gap-1">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<button type="button" />}
+                size="sm"
+                className="h-9 gap-2 rounded-md px-2.5 text-sm font-medium text-foreground/90 hover:bg-accent"
+                onClick={() => {
+                  void handleNewThread(null, { envMode: "local" });
+                }}
+              >
+                <SquarePenIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
+                <span>New chat</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <div className="relative mt-2">
+            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/50" />
+            <input
+              type="search"
+              value={sidebarSearchQuery}
+              onChange={(event) => setSidebarSearchQuery(event.target.value)}
+              placeholder="Search chats"
+              className="h-8 w-full rounded-md border border-border bg-secondary py-1 pl-8 pr-2 text-sm text-foreground outline-none placeholder:text-muted-foreground/45 focus:border-ring"
+            />
+          </div>
+          {normalizedSidebarSearchQuery ? (
+            <SidebarMenu className="mt-2 gap-0.5">
+              {searchThreadResults.length > 0 ? (
+                searchThreadResults.map((thread) => renderSearchThreadItem(thread))
+              ) : (
+                <SidebarMenuItem>
+                  <div className="px-2 py-2 text-xs text-muted-foreground/55">
+                    No matching chats.
+                  </div>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          ) : looseThreads.length > 0 ? (
+            <SidebarMenu className="mt-2 gap-0.5">
+              <SidebarMenuItem className="px-0 pb-1 pt-1">
+                <SidebarMenuButton
+                  render={<button type="button" />}
+                  size="sm"
+                  className="h-8 gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground/60 hover:bg-accent/60 hover:text-foreground"
+                  onClick={() => setLooseThreadSectionExpanded((expanded) => !expanded)}
+                >
+                  <ChevronRightIcon
+                    className={cn(
+                      "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150",
+                      looseThreadSectionExpanded && "rotate-90",
+                    )}
+                  />
+                  <span className="truncate">Chats</span>
+                  <span className="ml-auto text-xs text-muted-foreground/50">
+                    {looseThreads.length}
+                  </span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              {visibleLooseThreads.map((thread) => renderLooseThreadItem(thread))}
+              {hasHiddenLooseThreads ? (
+                <SidebarMenuItem className="w-full">
+                  <SidebarMenuButton
+                    render={<button type="button" />}
+                    size="sm"
+                    className="h-8 justify-start px-2.5 text-left text-xs text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                    onClick={() => setLooseThreadListExpanded(true)}
+                  >
+                    Show more
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ) : looseThreadSectionExpanded &&
+                looseThreadListExpanded &&
+                looseThreads.length > 3 ? (
+                <SidebarMenuItem className="w-full">
+                  <SidebarMenuButton
+                    render={<button type="button" />}
+                    size="sm"
+                    className="h-8 justify-start px-2.5 text-left text-xs text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                    onClick={() => setLooseThreadListExpanded(false)}
+                  >
+                    Show less
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ) : null}
+            </SidebarMenu>
+          ) : null}
+        </SidebarGroup>
+
+        <SidebarGroup className="px-2 pb-2 pt-1">
           <div className="mb-1 flex items-center justify-between px-2">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
               Projects
@@ -2490,7 +2952,7 @@ export default function Sidebar() {
                   render={
                     <button
                       type="button"
-                      aria-label="Create workbook"
+                      aria-label="Create workspace"
                       className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={openProjectGroupCreator}
                     />
@@ -2498,7 +2960,7 @@ export default function Sidebar() {
                 >
                   <FolderPlusIcon className="size-3.5" />
                 </TooltipTrigger>
-                <TooltipPopup side="right">Create workbook</TooltipPopup>
+                <TooltipPopup side="right">Create workspace</TooltipPopup>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger
@@ -2573,7 +3035,7 @@ export default function Sidebar() {
               <div className="mt-1.5 grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_88px]">
                 <input
                   className="min-w-0 rounded-md border border-border bg-secondary px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                  placeholder="Workbook name (optional)"
+                  placeholder="Workspace name (optional)"
                   value={newProjectGroupName}
                   list="sidebar-workbook-name-options"
                   onChange={(event) => {
@@ -2629,7 +3091,7 @@ export default function Sidebar() {
             >
               <SidebarMenu>
                 <SortableContext
-                  items={sortedProjects.map((project) => project.id)}
+                  items={activeProjects.map((project) => project.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   {groupedProjects.map((group) => (
@@ -2648,6 +3110,47 @@ export default function Sidebar() {
                     </Fragment>
                   ))}
                 </SortableContext>
+                {setAsideProjects.length > 0 ? (
+                  <>
+                    <SidebarMenuItem className="px-0 pb-1 pt-3">
+                      <SidebarMenuButton
+                        size="sm"
+                        aria-label={`${isSetAsideProjectSectionExpanded ? "Collapse" : "Expand"} set aside projects`}
+                        aria-expanded={isSetAsideProjectSectionExpanded}
+                        className="h-8 gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground/60 hover:bg-accent/60 hover:text-foreground"
+                        onClick={() => toggleProjectSectionExpanded(SET_ASIDE_PROJECT_SECTION_KEY)}
+                      >
+                        <ChevronRightIcon
+                          className={cn(
+                            "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150",
+                            isSetAsideProjectSectionExpanded && "rotate-90",
+                          )}
+                        />
+                        <ArchiveIcon className="size-3.5 shrink-0" />
+                        <span className="truncate">Set aside</span>
+                        <span className="ml-auto text-xs text-muted-foreground/50">
+                          {setAsideProjects.length}
+                        </span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    {isSetAsideProjectSectionExpanded
+                      ? groupedSetAsideProjects.map((group) => (
+                          <Fragment key={`set-aside:${group.key}`}>
+                            {renderProjectGroupHeader(group)}
+                            {(group.name === null || expandedWorkbookKeys.has(group.key)) &&
+                              group.projects.map((project) => (
+                                <SidebarMenuItem
+                                  key={project.id}
+                                  className={cn("rounded-md", group.name ? "ml-3" : undefined)}
+                                >
+                                  {renderProjectItem(project, null)}
+                                </SidebarMenuItem>
+                              ))}
+                          </Fragment>
+                        ))
+                      : null}
+                  </>
+                ) : null}
               </SidebarMenu>
             </DndContext>
           ) : (
@@ -2666,6 +3169,47 @@ export default function Sidebar() {
                     ))}
                 </Fragment>
               ))}
+              {setAsideProjects.length > 0 ? (
+                <>
+                  <SidebarMenuItem className="px-0 pb-1 pt-3">
+                    <SidebarMenuButton
+                      size="sm"
+                      aria-label={`${isSetAsideProjectSectionExpanded ? "Collapse" : "Expand"} set aside projects`}
+                      aria-expanded={isSetAsideProjectSectionExpanded}
+                      className="h-8 gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground/60 hover:bg-accent/60 hover:text-foreground"
+                      onClick={() => toggleProjectSectionExpanded(SET_ASIDE_PROJECT_SECTION_KEY)}
+                    >
+                      <ChevronRightIcon
+                        className={cn(
+                          "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150",
+                          isSetAsideProjectSectionExpanded && "rotate-90",
+                        )}
+                      />
+                      <ArchiveIcon className="size-3.5 shrink-0" />
+                      <span className="truncate">Set aside</span>
+                      <span className="ml-auto text-xs text-muted-foreground/50">
+                        {setAsideProjects.length}
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  {isSetAsideProjectSectionExpanded
+                    ? groupedSetAsideProjects.map((group) => (
+                        <Fragment key={`set-aside:${group.key}`}>
+                          {renderProjectGroupHeader(group)}
+                          {(group.name === null || expandedWorkbookKeys.has(group.key)) &&
+                            group.projects.map((project) => (
+                              <SidebarMenuItem
+                                key={project.id}
+                                className={cn("rounded-md", group.name ? "ml-3" : undefined)}
+                              >
+                                {renderProjectItem(project, null)}
+                              </SidebarMenuItem>
+                            ))}
+                        </Fragment>
+                      ))
+                    : null}
+                </>
+              ) : null}
             </SidebarMenu>
           )}
 
@@ -2808,7 +3352,7 @@ export default function Sidebar() {
               </Field>
 
               <Field>
-                <FieldLabel htmlFor="sidebar-project-workbook-name">Workbook</FieldLabel>
+                <FieldLabel htmlFor="sidebar-project-workbook-name">Workspace</FieldLabel>
                 <Input
                   id="sidebar-project-workbook-name"
                   value={editingProject?.groupName ?? ""}
@@ -2829,16 +3373,16 @@ export default function Sidebar() {
                       };
                     })
                   }
-                  placeholder="Optional workbook"
+                  placeholder="Optional workspace"
                 />
                 <FieldDescription>
-                  Move this project into another workbook or leave blank. Edit the workbook itself
+                  Move this project into another workspace or leave blank. Edit the workspace itself
                   to rename it.
                 </FieldDescription>
               </Field>
 
               <Field>
-                <FieldLabel htmlFor="sidebar-project-workbook-emoji">Workbook emoji</FieldLabel>
+                <FieldLabel htmlFor="sidebar-project-workbook-emoji">Workspace emoji</FieldLabel>
                 <Input
                   id="sidebar-project-workbook-emoji"
                   value={editingProject?.groupEmoji ?? ""}
@@ -2847,7 +3391,7 @@ export default function Sidebar() {
                       current ? { ...current, groupEmoji: event.target.value } : current,
                     )
                   }
-                  placeholder="Optional workbook emoji"
+                  placeholder="Optional workspace emoji"
                 />
               </Field>
             </div>
@@ -2881,13 +3425,13 @@ export default function Sidebar() {
           <DialogPanel>
             <DialogHeader>
               <DialogTitle>
-                {editingProjectGroup?.mode === "create" ? "Create workbook" : "Edit workbook"}
+                {editingProjectGroup?.mode === "create" ? "Create workspace" : "Edit workspace"}
               </DialogTitle>
             </DialogHeader>
 
             <div className="space-y-4">
               <Field>
-                <FieldLabel htmlFor="sidebar-project-group-name">Workbook name</FieldLabel>
+                <FieldLabel htmlFor="sidebar-project-group-name">Workspace name</FieldLabel>
                 <Input
                   id="sidebar-project-group-name"
                   value={editingProjectGroup?.groupName ?? ""}
@@ -2896,13 +3440,13 @@ export default function Sidebar() {
                       current ? { ...current, groupName: event.target.value } : current,
                     )
                   }
-                  placeholder="Workbook name"
+                  placeholder="Workspace name"
                 />
-                <FieldDescription>Shown above the projects in this workbook.</FieldDescription>
+                <FieldDescription>Shown above the projects in this workspace.</FieldDescription>
               </Field>
 
               <Field>
-                <FieldLabel htmlFor="sidebar-project-group-emoji">Workbook emoji</FieldLabel>
+                <FieldLabel htmlFor="sidebar-project-group-emoji">Workspace emoji</FieldLabel>
                 <Input
                   id="sidebar-project-group-emoji"
                   value={editingProjectGroup?.groupEmoji ?? ""}
@@ -2925,7 +3469,7 @@ export default function Sidebar() {
                 <div className="max-h-52 overflow-y-auto rounded-md border border-border bg-secondary/30 p-2">
                   {sortedProjects.length === 0 ? (
                     <p className="px-2 py-2 text-xs text-muted-foreground/60">
-                      Name the workbook, then pick its first project.
+                      Name the workspace, then pick its first project.
                     </p>
                   ) : (
                     <div className="space-y-1">
@@ -2957,8 +3501,8 @@ export default function Sidebar() {
                 </div>
                 <FieldDescription>
                   {sortedProjects.length === 0
-                    ? "After saving, choose the first project for this workbook."
-                    : "Select the projects that belong in this workbook."}
+                    ? "After saving, choose the first project for this workspace."
+                    : "Select the projects that belong in this workspace."}
                 </FieldDescription>
               </Field>
             </div>
@@ -2981,7 +3525,7 @@ export default function Sidebar() {
                     ? "Creating..."
                     : "Saving..."
                   : editingProjectGroup?.mode === "create"
-                    ? "Create workbook"
+                    ? "Create workspace"
                     : "Save"}
               </Button>
             </DialogFooter>

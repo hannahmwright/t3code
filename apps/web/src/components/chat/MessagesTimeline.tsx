@@ -26,6 +26,9 @@ import {
   EyeIcon,
   GlobeIcon,
   HammerIcon,
+  ImageIcon,
+  PlayCircleIcon,
+  SendIcon,
   type LucideIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -34,6 +37,14 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { clamp } from "effect/Number";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -50,6 +61,8 @@ import {
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
+import { resolvePrimaryEnvironmentHttpUrl } from "../../primaryEnvironment";
+import type { VisualProofArtifact, VisualProofRun } from "../../types";
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
@@ -81,6 +94,8 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  onReviewAssistantMessage?: (message: TimelineMessage) => void;
+  onSendAssistantMessageToSource?: (message: TimelineMessage) => void;
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
@@ -105,6 +120,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  onReviewAssistantMessage,
+  onSendAssistantMessageToSource,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -345,7 +362,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               )}
               <div className="space-y-0.5">
                 {visibleEntries.map((workEntry) => (
-                  <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
+                  <SimpleWorkEntryRow
+                    key={`work-row:${workEntry.id}`}
+                    workEntry={workEntry}
+                    onTimelineImageLoad={onTimelineImageLoad}
+                  />
                 ))}
               </div>
             </div>
@@ -437,6 +458,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "assistant" &&
         (() => {
           const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+          const canActOnAssistantMessage =
+            !row.message.streaming && row.message.text.trim().length > 0;
           return (
             <>
               {row.showCompletionDivider && (
@@ -510,15 +533,41 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                  {formatMessageMeta(
-                    row.message.createdAt,
-                    row.message.streaming
-                      ? formatElapsed(row.durationStart, nowIso)
-                      : formatElapsed(row.durationStart, row.message.completedAt),
-                    timestampFormat,
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {canActOnAssistantMessage && onReviewAssistantMessage && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => onReviewAssistantMessage(row.message)}
+                      title="Ask another thread to review this response"
+                    >
+                      <BotIcon className="size-3" />
+                      Review
+                    </Button>
                   )}
-                </p>
+                  {canActOnAssistantMessage && onSendAssistantMessageToSource && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => onSendAssistantMessageToSource(row.message)}
+                      title="Send this response back to the source thread"
+                    >
+                      <SendIcon className="size-3" />
+                      Send to source
+                    </Button>
+                  )}
+                  <p className="text-[10px] text-muted-foreground/30">
+                    {formatMessageMeta(
+                      row.message.createdAt,
+                      row.message.streaming
+                        ? formatElapsed(row.durationStart, nowIso)
+                        : formatElapsed(row.durationStart, row.message.completedAt),
+                      timestampFormat,
+                    )}
+                  </p>
+                </div>
               </div>
             </>
           );
@@ -853,10 +902,153 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
+function visualProofArtifactUrl(artifactId: string): string {
+  return resolvePrimaryEnvironmentHttpUrl(`/proof-artifacts/${encodeURIComponent(artifactId)}`);
+}
+
+function formatArtifactSize(byteSize: number): string {
+  if (!Number.isFinite(byteSize) || byteSize <= 0) return "";
+  if (byteSize < 1024 * 1024) return `${Math.max(1, Math.round(byteSize / 1024))} KB`;
+  return `${(byteSize / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function VisualProofCard(props: { visualProof: VisualProofRun; onTimelineImageLoad: () => void }) {
+  const { visualProof, onTimelineImageLoad } = props;
+  const poster =
+    visualProof.artifacts.find((artifact) => artifact.id === visualProof.posterArtifactId) ??
+    visualProof.artifacts.find((artifact) => artifact.kind === "image") ??
+    null;
+  const video =
+    visualProof.artifacts.find((artifact) => artifact.id === visualProof.videoArtifactId) ??
+    visualProof.artifacts.find((artifact) => artifact.kind === "video") ??
+    null;
+  const primaryArtifact = video ?? poster;
+  const [viewerArtifact, setViewerArtifact] = useState<VisualProofArtifact | null>(null);
+  const statusLabel =
+    visualProof.status === "completed"
+      ? "Completed"
+      : visualProof.status === "failed"
+        ? "Failed"
+        : visualProof.status === "step-captured"
+          ? "Captured"
+          : "Started";
+  const statusClass =
+    visualProof.status === "failed"
+      ? "border-destructive/30 bg-destructive/5 text-destructive"
+      : "border-emerald-500/25 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300";
+
+  return (
+    <div className="my-2 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-sm">
+      {video ? (
+        <video
+          src={visualProofArtifactUrl(video.id)}
+          controls
+          playsInline
+          preload="metadata"
+          className="aspect-video w-full bg-black object-contain"
+          onLoadedMetadata={onTimelineImageLoad}
+        />
+      ) : poster ? (
+        <img
+          src={visualProofArtifactUrl(poster.id)}
+          alt={poster.filename}
+          className="aspect-video w-full bg-muted object-cover"
+          onLoad={onTimelineImageLoad}
+          onError={onTimelineImageLoad}
+        />
+      ) : null}
+      <div className="space-y-2 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", statusClass)}>
+            {statusLabel}
+          </span>
+          <span className="flex items-center gap-1 text-xs font-medium">
+            {video ? <PlayCircleIcon className="size-3.5" /> : <ImageIcon className="size-3.5" />}
+            {visualProof.title}
+          </span>
+          {primaryArtifact ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-7 gap-1 px-2 text-xs"
+              onClick={() => setViewerArtifact(primaryArtifact)}
+            >
+              <EyeIcon className="size-3.5" />
+              View
+            </Button>
+          ) : null}
+        </div>
+        <p className="text-xs text-muted-foreground">{visualProof.summary}</p>
+        {visualProof.artifacts.length > 0 && (
+          <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground/80">
+            <span>
+              {visualProof.stepCount} screenshot{visualProof.stepCount === 1 ? "" : "s"}
+            </span>
+            {video ? <span>1 video</span> : null}
+            {visualProof.artifacts.map((artifact: VisualProofArtifact) => (
+              <a
+                key={artifact.id}
+                href={visualProofArtifactUrl(artifact.id)}
+                target="_blank"
+                rel="noreferrer"
+                className="underline-offset-2 hover:underline"
+              >
+                {artifact.kind} {formatArtifactSize(artifact.byteSize)}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+      <Dialog
+        open={viewerArtifact !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewerArtifact(null);
+          }
+        }}
+      >
+        <DialogPopup className="max-h-[92vh] max-w-5xl overflow-hidden" bottomStickOnMobile={false}>
+          <DialogHeader className="pr-12">
+            <DialogTitle>{visualProof.title}</DialogTitle>
+            <DialogDescription>{viewerArtifact?.filename ?? visualProof.summary}</DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="p-0">
+            {viewerArtifact?.kind === "video" ? (
+              <video
+                src={visualProofArtifactUrl(viewerArtifact.id)}
+                controls
+                playsInline
+                autoPlay
+                className="max-h-[72vh] w-full bg-black object-contain"
+              />
+            ) : viewerArtifact ? (
+              <img
+                src={visualProofArtifactUrl(viewerArtifact.id)}
+                alt={viewerArtifact.filename}
+                className="max-h-[72vh] w-full bg-black object-contain"
+              />
+            ) : null}
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+    </div>
+  );
+}
+
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
+  onTimelineImageLoad: () => void;
 }) {
-  const { workEntry } = props;
+  const { workEntry, onTimelineImageLoad } = props;
+  if (workEntry.visualProof) {
+    return (
+      <VisualProofCard
+        visualProof={workEntry.visualProof}
+        onTimelineImageLoad={onTimelineImageLoad}
+      />
+    );
+  }
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);

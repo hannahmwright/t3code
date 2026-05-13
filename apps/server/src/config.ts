@@ -22,6 +22,7 @@ export interface ServerDerivedPaths {
   readonly keybindingsConfigPath: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
+  readonly visualProofArtifactsDir: string;
   readonly logsDir: string;
   readonly serverLogPath: string;
   readonly providerLogsDir: string;
@@ -55,6 +56,7 @@ export const deriveServerPaths = Effect.fn(function* (
   const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
   const dbPath = join(stateDir, "state.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
+  const visualProofArtifactsDir = join(stateDir, "visual-proof-artifacts");
   const logsDir = join(stateDir, "logs");
   const providerLogsDir = join(logsDir, "provider");
   return {
@@ -63,6 +65,7 @@ export const deriveServerPaths = Effect.fn(function* (
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
+    visualProofArtifactsDir,
     logsDir,
     serverLogPath: join(logsDir, "server.log"),
     providerLogsDir,
@@ -94,6 +97,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
         yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
         yield* fs.makeDirectory(derivedPaths.logsDir, { recursive: true });
         yield* fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true });
+        yield* fs.makeDirectory(derivedPaths.visualProofArtifactsDir, { recursive: true });
 
         return {
           cwd,

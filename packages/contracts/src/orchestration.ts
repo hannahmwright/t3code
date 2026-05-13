@@ -18,6 +18,7 @@ import {
 
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
+  getThreadSnapshot: "orchestration.getThreadSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
@@ -151,6 +152,7 @@ export const OrchestrationProject = Schema.Struct({
   title: TrimmedNonEmptyString,
   emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  setAside: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
   workbookId: Schema.optional(Schema.NullOr(WorkbookId)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
@@ -232,6 +234,21 @@ export const OrchestrationSession = Schema.Struct({
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
 
+export const ThreadGoalStatus = Schema.Literals(["active", "paused", "budgetLimited", "complete"]);
+export type ThreadGoalStatus = typeof ThreadGoalStatus.Type;
+
+export const ThreadGoalSnapshot = Schema.Struct({
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
+  objective: TrimmedNonEmptyString,
+  status: ThreadGoalStatus,
+  tokenBudget: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  tokensUsed: Schema.optional(NonNegativeInt),
+  timeUsedSeconds: Schema.optional(NonNegativeInt),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ThreadGoalSnapshot = typeof ThreadGoalSnapshot.Type;
+
 export const OrchestrationCheckpointFile = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: TrimmedNonEmptyString,
@@ -295,7 +312,10 @@ export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
+  sidechatSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
@@ -304,6 +324,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  goal: Schema.optional(Schema.NullOr(ThreadGoalSnapshot)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -313,6 +334,7 @@ export const OrchestrationThread = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  detailsLoaded: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => true)),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -357,6 +379,7 @@ export const ProjectCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  setAside: Schema.optional(Schema.Boolean),
   workbookId: Schema.optional(Schema.NullOr(WorkbookId)),
   groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -372,6 +395,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  setAside: Schema.optional(Schema.Boolean),
   workbookId: Schema.optional(Schema.NullOr(WorkbookId)),
   groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -390,7 +414,8 @@ const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
+  sidechatSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
@@ -444,11 +469,13 @@ export const ThreadTurnStartCommand = Schema.Struct({
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
   }),
+  providerMessageText: Schema.optional(Schema.String),
   provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
   modelOptions: Schema.optional(ProviderModelOptions),
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
+  notificationTargetEndpoint: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -467,11 +494,13 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     text: Schema.String,
     attachments: Schema.Array(UploadChatAttachment),
   }),
+  providerMessageText: Schema.optional(Schema.String),
   provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
   modelOptions: Schema.optional(ProviderModelOptions),
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
+  notificationTargetEndpoint: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
@@ -519,6 +548,28 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadGoalSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  objective: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
+const ThreadGoalGetCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.get"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadGoalClearCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.clear"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   WorkbookCreateCommand,
   WorkbookMetaUpdateCommand,
@@ -537,6 +588,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadGoalSetCommand,
+  ThreadGoalGetCommand,
+  ThreadGoalClearCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -559,6 +613,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadGoalSetCommand,
+  ThreadGoalGetCommand,
+  ThreadGoalClearCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -627,6 +684,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadGoalSyncCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.sync"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  goal: Schema.NullOr(ThreadGoalSnapshot),
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -635,6 +700,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadGoalSyncCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -664,6 +730,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.checkpoint-revert-requested",
   "thread.reverted",
   "thread.session-stop-requested",
+  "thread.goal-set-requested",
+  "thread.goal-get-requested",
+  "thread.goal-clear-requested",
+  "thread.goal-synced",
   "thread.session-set",
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
@@ -700,6 +770,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   emoji: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
   color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  setAside: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
   workbookId: Schema.optional(Schema.NullOr(WorkbookId)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
@@ -717,6 +788,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   emoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   color: Schema.optional(Schema.NullOr(ProjectAccentColor)),
+  setAside: Schema.optional(Schema.Boolean),
   workbookId: Schema.optional(Schema.NullOr(WorkbookId)),
   groupName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupEmoji: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -733,7 +805,10 @@ export const ProjectDeletedPayload = Schema.Struct({
 
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
+  sidechatSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
@@ -742,6 +817,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  goal: Schema.optional(Schema.NullOr(ThreadGoalSnapshot)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -789,11 +865,13 @@ export const ThreadMessageSentPayload = Schema.Struct({
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  providerMessageText: Schema.optional(Schema.String),
   provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
   modelOptions: Schema.optional(ProviderModelOptions),
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
+  notificationTargetEndpoint: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -836,6 +914,28 @@ export const ThreadRevertedPayload = Schema.Struct({
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   createdAt: IsoDateTime,
+});
+
+export const ThreadGoalSetRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  objective: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadGoalGetRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadGoalClearRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadGoalSyncedPayload = Schema.Struct({
+  threadId: ThreadId,
+  goal: Schema.NullOr(ThreadGoalSnapshot),
+  updatedAt: IsoDateTime,
 });
 
 export const ThreadSessionSetPayload = Schema.Struct({
@@ -983,6 +1083,26 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.goal-set-requested"),
+    payload: ThreadGoalSetRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-get-requested"),
+    payload: ThreadGoalGetRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-clear-requested"),
+    payload: ThreadGoalClearRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-synced"),
+    payload: ThreadGoalSyncedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.session-set"),
     payload: ThreadSessionSetPayload,
   }),
@@ -1068,10 +1188,24 @@ export const DispatchResult = Schema.Struct({
 });
 export type DispatchResult = typeof DispatchResult.Type;
 
-export const OrchestrationGetSnapshotInput = Schema.Struct({});
+export const OrchestrationSnapshotDetailMode = Schema.Literals(["full", "active"]);
+export type OrchestrationSnapshotDetailMode = typeof OrchestrationSnapshotDetailMode.Type;
+
+export const OrchestrationGetSnapshotInput = Schema.Struct({
+  detailMode: Schema.optional(OrchestrationSnapshotDetailMode),
+});
 export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput.Type;
 const OrchestrationGetSnapshotResult = OrchestrationReadModel;
 export type OrchestrationGetSnapshotResult = typeof OrchestrationGetSnapshotResult.Type;
+
+export const OrchestrationGetThreadSnapshotInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationGetThreadSnapshotInput = typeof OrchestrationGetThreadSnapshotInput.Type;
+export const OrchestrationGetThreadSnapshotResult = Schema.Struct({
+  thread: OrchestrationThread,
+});
+export type OrchestrationGetThreadSnapshotResult = typeof OrchestrationGetThreadSnapshotResult.Type;
 
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({ threadId: ThreadId }),
@@ -1103,6 +1237,10 @@ export const OrchestrationRpcSchemas = {
   getSnapshot: {
     input: OrchestrationGetSnapshotInput,
     output: OrchestrationGetSnapshotResult,
+  },
+  getThreadSnapshot: {
+    input: OrchestrationGetThreadSnapshotInput,
+    output: OrchestrationGetThreadSnapshotResult,
   },
   dispatchCommand: {
     input: ClientOrchestrationCommand,

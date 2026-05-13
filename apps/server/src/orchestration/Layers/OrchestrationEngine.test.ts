@@ -6,6 +6,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
+  type OrchestrationReadModel,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
@@ -21,11 +22,16 @@ import {
 } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
   type OrchestrationProjectionPipelineShape,
 } from "../Services/ProjectionPipeline.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
@@ -39,6 +45,7 @@ async function createOrchestrationSystem() {
     prefix: "t3-orchestration-engine-test-",
   });
   const orchestrationLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -60,6 +67,55 @@ function now() {
 }
 
 describe("OrchestrationEngine", () => {
+  it("boots from the persisted projection snapshot and only replays newer events", async () => {
+    let readAllCalled = false;
+    let replayFromSequence: number | null = null;
+    const snapshot: OrchestrationReadModel = {
+      snapshotSequence: 123,
+      workbooks: [],
+      projects: [],
+      threads: [],
+      updatedAt: now(),
+    };
+    const snapshotQuery: ProjectionSnapshotQueryShape = {
+      getSnapshot: () => Effect.succeed(snapshot),
+      getThreadSnapshot: () => Effect.die("not implemented"),
+    };
+    const eventStore: OrchestrationEventStoreShape = {
+      append: () => Effect.die("not implemented"),
+      readFromSequence(sequenceExclusive) {
+        replayFromSequence = sequenceExclusive;
+        return Stream.empty;
+      },
+      readAll() {
+        readAllCalled = true;
+        return Stream.empty;
+      },
+    };
+
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(ProjectionSnapshotQuery, snapshotQuery)),
+        Layer.provide(OrchestrationProjectionPipelineLive),
+        Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-orchestration-engine-bootstrap-test-",
+          }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+
+    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(123);
+    expect(replayFromSequence).toBe(123);
+    expect(readAllCalled).toBe(false);
+    await runtime.dispose();
+  });
+
   it("returns deterministic read models for repeated reads", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();
@@ -326,6 +382,7 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(OrchestrationProjectionPipelineLive),
         Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -412,6 +469,7 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
         Layer.provide(OrchestrationEventStoreLive),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -547,6 +605,7 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
         Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),

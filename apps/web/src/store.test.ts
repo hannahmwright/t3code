@@ -1,5 +1,6 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
+  MessageId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -7,7 +8,14 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
+import {
+  markThreadUnread,
+  reorderProjects,
+  setProjectSetAside,
+  syncServerReadModel,
+  syncServerThread,
+  type AppState,
+} from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -21,6 +29,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
     messages: [],
+    detailsLoaded: true,
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
@@ -74,6 +83,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     proposedPlans: [],
     checkpoints: [],
     session: null,
+    detailsLoaded: true,
     ...overrides,
   } satisfies OrchestrationReadModel["threads"][number];
 }
@@ -89,6 +99,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         title: "Project",
         emoji: null,
         color: null,
+        setAside: false,
         groupName: null,
         groupEmoji: null,
         workspaceRoot: "/tmp/project",
@@ -111,6 +122,7 @@ function makeReadModelProject(
     title: "Project",
     emoji: null,
     color: null,
+    setAside: false,
     groupName: null,
     groupEmoji: null,
     workspaceRoot: "/tmp/project",
@@ -214,6 +226,34 @@ describe("store pure functions", () => {
     const next = reorderProjects(state, project1, project3);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project3, project1]);
+  });
+
+  it("setProjectSetAside updates the local sidebar visibility state for a project", () => {
+    const state: AppState = {
+      workbooks: [],
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "Project 1",
+          emoji: null,
+          color: null,
+          groupName: null,
+          groupEmoji: null,
+          cwd: "/tmp/project-1",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const setAside = setProjectSetAside(state, ProjectId.makeUnsafe("project-1"), true);
+    const restored = setProjectSetAside(setAside, ProjectId.makeUnsafe("project-1"), false);
+
+    expect(setAside.projects[0]?.setAside).toBe(true);
+    expect(restored.projects[0]?.setAside).toBe(false);
   });
 });
 
@@ -369,5 +409,78 @@ describe("store read model sync", () => {
       groupName: "Workspace",
       groupEmoji: "rocket",
     });
+  });
+
+  it("hydrates synced set-aside state from the read model", () => {
+    const next = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(makeReadModelThread({})),
+    );
+
+    expect(next.projects[0]?.setAside).toBe(false);
+
+    const synced = syncServerReadModel(next, {
+      ...makeReadModel(makeReadModelThread({})),
+      projects: [
+        makeReadModelProject({
+          setAside: true,
+        }),
+      ],
+    });
+
+    expect(synced.projects[0]?.setAside).toBe(true);
+  });
+
+  it("preserves hydrated thread details when a light snapshot arrives", () => {
+    const initialThread = makeThread({
+      detailsLoaded: true,
+      messages: [
+        {
+          id: MessageId.makeUnsafe("message-1"),
+          role: "assistant",
+          text: "still here",
+          createdAt: "2026-02-27T00:00:00.000Z",
+          completedAt: "2026-02-27T00:00:01.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        detailsLoaded: false,
+        messages: [],
+        activities: [],
+        checkpoints: [],
+      }),
+    );
+
+    const next = syncServerReadModel(makeState(initialThread), readModel);
+
+    expect(next.threads[0]?.detailsLoaded).toBe(true);
+    expect(next.threads[0]?.messages.map((message) => message.text)).toEqual(["still here"]);
+  });
+
+  it("hydrates one thread from a lazy thread snapshot", () => {
+    const initialThread = makeThread({ detailsLoaded: false });
+    const fullThread = makeReadModelThread({
+      detailsLoaded: true,
+      messages: [
+        {
+          id: MessageId.makeUnsafe("message-1"),
+          role: "assistant",
+          text: "loaded on demand",
+          turnId: null,
+          attachments: undefined,
+          streaming: false,
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:01.000Z",
+        },
+      ],
+    });
+
+    const next = syncServerThread(makeState(initialThread), fullThread);
+
+    expect(next.threads[0]?.detailsLoaded).toBe(true);
+    expect(next.threads[0]?.messages.map((message) => message.text)).toEqual(["loaded on demand"]);
   });
 });

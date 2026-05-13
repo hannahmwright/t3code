@@ -18,6 +18,7 @@ import type {
   Thread,
   ThreadSession,
   TurnDiffSummary,
+  VisualProofRun,
 } from "./types";
 
 export type ProviderPickerKind = ProviderKind | "cursor";
@@ -43,6 +44,7 @@ export interface WorkLogEntry {
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
+  visualProof?: VisualProofRun;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -483,7 +485,9 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries = ordered
-    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) =>
+      latestTurnId ? activity.turnId === latestTurnId || isThreadGoalActivity(activity) : true,
+    )
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
     .filter((activity) => activity.kind !== "context-window.updated")
@@ -493,6 +497,10 @@ export function deriveWorkLogEntries(
   return collapseDerivedWorkLogEntries(entries).map(
     ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
   );
+}
+
+function isThreadGoalActivity(activity: OrchestrationThreadActivity): boolean {
+  return activity.kind.startsWith("thread.goal.");
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -545,11 +553,78 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (requestKind) {
     entry.requestKind = requestKind;
   }
+  const visualProof = parseVisualProofRun(payload);
+  if (visualProof && activity.kind.startsWith("visual-proof.")) {
+    entry.visualProof = visualProof;
+  }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
   }
   return entry;
+}
+
+function parseVisualProofRun(payload: Record<string, unknown> | null): VisualProofRun | null {
+  if (!payload) return null;
+  if (
+    typeof payload.runId !== "string" ||
+    typeof payload.status !== "string" ||
+    typeof payload.title !== "string" ||
+    typeof payload.summary !== "string" ||
+    !Array.isArray(payload.artifacts) ||
+    typeof payload.updatedAt !== "string"
+  ) {
+    return null;
+  }
+  const status = payload.status;
+  if (
+    status !== "started" &&
+    status !== "step-captured" &&
+    status !== "completed" &&
+    status !== "failed"
+  ) {
+    return null;
+  }
+  const artifacts = payload.artifacts.flatMap((artifact): VisualProofRun["artifacts"] => {
+    if (!artifact || typeof artifact !== "object") return [];
+    const candidate = artifact as Record<string, unknown>;
+    if (
+      typeof candidate.id !== "string" ||
+      (candidate.kind !== "image" && candidate.kind !== "video") ||
+      typeof candidate.mimeType !== "string" ||
+      typeof candidate.byteSize !== "number" ||
+      typeof candidate.filename !== "string" ||
+      typeof candidate.createdAt !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: candidate.id,
+        kind: candidate.kind,
+        mimeType: candidate.mimeType,
+        byteSize: candidate.byteSize,
+        filename: candidate.filename,
+        createdAt: candidate.createdAt,
+        ...(typeof candidate.width === "number" ? { width: candidate.width } : {}),
+        ...(typeof candidate.height === "number" ? { height: candidate.height } : {}),
+        ...(typeof candidate.durationMs === "number" ? { durationMs: candidate.durationMs } : {}),
+      },
+    ];
+  });
+  return {
+    runId: payload.runId,
+    status,
+    cwd: typeof payload.cwd === "string" ? payload.cwd : null,
+    title: payload.title,
+    summary: payload.summary,
+    artifacts,
+    posterArtifactId:
+      typeof payload.posterArtifactId === "string" ? payload.posterArtifactId : null,
+    videoArtifactId: typeof payload.videoArtifactId === "string" ? payload.videoArtifactId : null,
+    stepCount: typeof payload.stepCount === "number" ? payload.stepCount : artifacts.length,
+    updatedAt: payload.updatedAt,
+  };
 }
 
 function collapseDerivedWorkLogEntries(

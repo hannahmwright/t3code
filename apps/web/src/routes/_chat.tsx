@@ -43,8 +43,8 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
-      if (!projectId) return;
+      const projectId =
+        activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id ?? null;
 
       const command = resolveShortcutCommand(event, keybindings, {
         context: {

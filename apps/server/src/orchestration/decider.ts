@@ -181,6 +181,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           title: command.title,
           emoji: command.emoji ?? null,
           color: command.color ?? null,
+          setAside: command.setAside ?? false,
           workbookId: command.workbookId ?? null,
           groupName: command.groupName ?? null,
           groupEmoji: command.groupEmoji ?? null,
@@ -220,6 +221,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.emoji !== undefined ? { emoji: command.emoji } : {}),
           ...(command.color !== undefined ? { color: command.color } : {}),
+          ...(command.setAside !== undefined ? { setAside: command.setAside } : {}),
           ...(command.workbookId !== undefined ? { workbookId: command.workbookId } : {}),
           ...(command.groupName !== undefined ? { groupName: command.groupName } : {}),
           ...(command.groupEmoji !== undefined ? { groupEmoji: command.groupEmoji } : {}),
@@ -254,11 +256,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
-      yield* requireProject({
-        readModel,
-        command,
-        projectId: command.projectId,
-      });
+      if (command.projectId !== null) {
+        yield* requireProject({
+          readModel,
+          command,
+          projectId: command.projectId,
+        });
+      }
+      const sidechatSourceThreadId = command.sidechatSourceThreadId ?? null;
+      if (sidechatSourceThreadId !== null) {
+        const sourceThread = yield* requireThread({
+          readModel,
+          command,
+          threadId: sidechatSourceThreadId,
+        });
+        if (sourceThread.projectId !== command.projectId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Sidechat source thread '${sidechatSourceThreadId}' belongs to a different project.`,
+          });
+        }
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -275,6 +293,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          sidechatSourceThreadId,
           title: command.title,
           model: command.model,
           runtimeMode: command.runtimeMode,
@@ -443,6 +462,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          ...(command.providerMessageText !== undefined
+            ? { providerMessageText: command.providerMessageText }
+            : {}),
           ...(command.provider !== undefined ? { provider: command.provider } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.modelOptions !== undefined ? { modelOptions: command.modelOptions } : {}),
@@ -450,6 +472,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { providerOptions: command.providerOptions }
             : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
+          ...(command.notificationTargetEndpoint !== undefined
+            ? { notificationTargetEndpoint: command.notificationTargetEndpoint }
+            : {}),
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
@@ -569,6 +594,70 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           commandId: command.commandId,
         }),
         type: "thread.session-stop-requested",
+        payload: {
+          threadId: command.threadId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.goal.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-set-requested",
+        payload: {
+          threadId: command.threadId,
+          objective: command.objective,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.goal.get": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-get-requested",
+        payload: {
+          threadId: command.threadId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.goal.clear": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-clear-requested",
         payload: {
           threadId: command.threadId,
           createdAt: command.createdAt,
@@ -717,6 +806,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           turnCount: command.turnCount,
+        },
+      };
+    }
+
+    case "thread.goal.sync": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-synced",
+        payload: {
+          threadId: command.threadId,
+          goal: command.goal,
+          updatedAt: command.createdAt,
         },
       };
     }

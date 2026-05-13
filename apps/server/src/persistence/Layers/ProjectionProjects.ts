@@ -15,7 +15,10 @@ import { ProjectScript } from "@t3tools/contracts";
 
 // Makes sure that the scripts are parsed from the JSON string the DB returns
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
-  Struct.assign({ scripts: Schema.fromJsonString(Schema.Array(ProjectScript)) }),
+  Struct.assign({
+    setAside: Schema.Number,
+    scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+  }),
 );
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
@@ -37,6 +40,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               title,
               emoji,
               color,
+              set_aside,
               workbook_id,
               group_name,
               group_emoji,
@@ -52,6 +56,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               ${row.title},
               ${row.emoji},
               ${row.color},
+              ${row.setAside},
               ${row.workbookId},
               ${row.groupName},
               ${row.groupEmoji},
@@ -67,6 +72,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               title = excluded.title,
               emoji = excluded.emoji,
               color = excluded.color,
+              set_aside = excluded.set_aside,
               workbook_id = excluded.workbook_id,
               group_name = excluded.group_name,
               group_emoji = excluded.group_emoji,
@@ -89,6 +95,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           title,
           emoji,
           color,
+          set_aside AS "setAside",
           workbook_id AS "workbookId",
           group_name AS "groupName",
           group_emoji AS "groupEmoji",
@@ -113,6 +120,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           title,
           emoji,
           color,
+          set_aside AS "setAside",
           workbook_id AS "workbookId",
           group_name AS "groupName",
           group_emoji AS "groupEmoji",
@@ -137,7 +145,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
   });
 
   const upsert: ProjectionProjectRepositoryShape["upsert"] = (row) =>
-    upsertProjectionProjectRow(row).pipe(
+    upsertProjectionProjectRow({ ...row, setAside: row.setAside ? 1 : 0 }).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProjectionProjectRepository.upsert:query",
@@ -158,7 +166,12 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
         Option.match(rowOption, {
           onNone: () => Effect.succeed(Option.none()),
           onSome: (row) =>
-            Effect.succeed(Option.some(row as Schema.Schema.Type<typeof ProjectionProject>)),
+            Effect.succeed(
+              Option.some({
+                ...row,
+                setAside: row.setAside === 1,
+              } satisfies Schema.Schema.Type<typeof ProjectionProject>),
+            ),
         }),
       ),
     );
@@ -171,7 +184,15 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           "ProjectionProjectRepository.listAll:decodeRows",
         ),
       ),
-      Effect.map((rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionProject>>),
+      Effect.map((rows) =>
+        rows.map(
+          (row) =>
+            ({
+              ...row,
+              setAside: row.setAside === 1,
+            }) satisfies Schema.Schema.Type<typeof ProjectionProject>,
+        ),
+      ),
     );
 
   const deleteById: ProjectionProjectRepositoryShape["deleteById"] = (input) =>

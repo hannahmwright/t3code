@@ -609,6 +609,38 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
   });
 
+  it("keeps goal request entries outside the latest turn filter", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "goal-request",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "thread.goal.set.requested",
+        summary: "Goal requested",
+        tone: "info",
+        payload: {
+          action: "set",
+          objective: "Make the canvas feel polished",
+          detail: "Make the canvas feel polished",
+        },
+      }),
+      makeActivity({
+        id: "turn-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-2",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, TurnId.makeUnsafe("turn-2"));
+    expect(entries.map((entry) => entry.id)).toEqual(["goal-request", "turn-2"]);
+    expect(entries[0]).toMatchObject({
+      label: "Goal requested",
+      detail: "Make the canvas feel polished",
+      tone: "info",
+    });
+  });
+
   it("omits checkpoint captured info entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

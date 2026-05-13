@@ -253,6 +253,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       yield* recordStartupHeartbeat.pipe(
         Effect.provideService(ProjectionSnapshotQuery, {
           getSnapshot,
+          getThreadSnapshot: () => Effect.die(new Error("getThreadSnapshot should not be called")),
         }),
         Effect.provideService(AnalyticsService, {
           record: recordTelemetry,

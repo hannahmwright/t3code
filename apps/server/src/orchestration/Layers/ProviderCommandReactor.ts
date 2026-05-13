@@ -11,6 +11,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type ThreadGoalSnapshot,
   type TurnId,
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Schema, Stream } from "effect";
@@ -21,12 +22,21 @@ import { GitCore } from "../../git/Services/GitCore.ts";
 import { ProviderAdapterRequestError, ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
 import { inferProviderForModel } from "@t3tools/shared/model";
+import {
+  bindVisualProofRunToTurn,
+  buildVisualProofPromptInstructions,
+  buildVisualProofRunPayload,
+  createVisualProofRunRequest,
+  getVisualProofRun,
+  shouldEnableVisualProofForPrompt,
+} from "../../visualProof.ts";
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -37,7 +47,10 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.goal-set-requested"
+      | "thread.goal-get-requested"
+      | "thread.goal-clear-requested";
   }
 >;
 
@@ -144,6 +157,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const git = yield* GitCore;
   const textGeneration = yield* TextGeneration;
+  const serverConfig = yield* ServerConfig;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -167,7 +181,8 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.goal.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -192,6 +207,48 @@ const make = Effect.gen(function* () {
       },
       createdAt: input.createdAt,
     });
+
+  const appendGoalRequestActivity = (
+    event: Extract<
+      ProviderIntentEvent,
+      | { type: "thread.goal-set-requested" }
+      | { type: "thread.goal-get-requested" }
+      | { type: "thread.goal-clear-requested" }
+    >,
+  ) => {
+    const action =
+      event.type === "thread.goal-set-requested"
+        ? "set"
+        : event.type === "thread.goal-clear-requested"
+          ? "clear"
+          : "show";
+    const objective = event.type === "thread.goal-set-requested" ? event.payload.objective : null;
+    const summary =
+      action === "set"
+        ? "Goal requested"
+        : action === "clear"
+          ? "Goal clear requested"
+          : "Goal status requested";
+
+    return orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("goal-request-activity"),
+      threadId: event.payload.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: "info",
+        kind: `thread.goal.${action}.requested`,
+        summary,
+        payload: {
+          action,
+          ...(objective ? { objective, detail: objective } : {}),
+        },
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      },
+      createdAt: event.payload.createdAt,
+    });
+  };
 
   const setThreadSession = (input: {
     readonly threadId: ThreadId;
@@ -405,6 +462,28 @@ const make = Effect.gen(function* () {
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const effectiveCwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: readModel.projects,
+    });
+    const proofRequest =
+      normalizedInput && shouldEnableVisualProofForPrompt(normalizedInput)
+        ? createVisualProofRunRequest({
+            threadId: input.threadId,
+            cwd: effectiveCwd ?? null,
+            title: "Visual proof",
+            summary: "Visual proof capture is ready.",
+          })
+        : null;
+    const providerInput =
+      normalizedInput && proofRequest
+        ? `${normalizedInput}${buildVisualProofPromptInstructions({
+            baseUrl: `http://127.0.0.1:${serverConfig.port}`,
+            runId: proofRequest.runId,
+            token: proofRequest.token,
+          })}`
+        : normalizedInput;
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -416,14 +495,35 @@ const make = Effect.gen(function* () {
         : (yield* providerService.getCapabilities(activeSession.provider)).sessionModelSwitch;
     const modelForTurn = sessionModelSwitch === "unsupported" ? activeSession?.model : input.model;
 
-    yield* providerService.sendTurn({
+    const turnStart = yield* providerService.sendTurn({
       threadId: input.threadId,
-      ...(normalizedInput ? { input: normalizedInput } : {}),
+      ...(providerInput ? { input: providerInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { model: modelForTurn } : {}),
       ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     });
+    if (proofRequest) {
+      bindVisualProofRunToTurn(proofRequest.runId, turnStart.turnId);
+      const proofRun = getVisualProofRun(proofRequest.runId);
+      if (proofRun) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: serverCommandId("visual-proof-started"),
+          threadId: input.threadId,
+          activity: {
+            id: EventId.makeUnsafe(`visual-proof:${crypto.randomUUID()}`),
+            tone: "info",
+            kind: "visual-proof.started",
+            summary: "Visual proof started",
+            payload: buildVisualProofRunPayload(proofRun),
+            turnId: turnStart.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        });
+      }
+    }
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fnUntraced(function* (input: {
@@ -532,7 +632,7 @@ const make = Effect.gen(function* () {
 
     yield* sendTurnForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: event.payload.providerMessageText ?? message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
@@ -700,6 +800,60 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processGoalRequested = Effect.fnUntraced(function* (
+    event: Extract<
+      ProviderIntentEvent,
+      | { type: "thread.goal-set-requested" }
+      | { type: "thread.goal-get-requested" }
+      | { type: "thread.goal-clear-requested" }
+    >,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    yield* appendGoalRequestActivity(event);
+    yield* ensureSessionForThread(event.payload.threadId, event.payload.createdAt);
+    const syncGoal = (goal: ThreadGoalSnapshot | null) =>
+      orchestrationEngine.dispatch({
+        type: "thread.goal.sync",
+        commandId: serverCommandId("provider-goal-sync"),
+        threadId: event.payload.threadId,
+        goal,
+        createdAt: event.payload.createdAt,
+      });
+
+    yield* Effect.gen(function* () {
+      if (event.type === "thread.goal-set-requested") {
+        const goal = yield* providerService.setGoal({
+          threadId: event.payload.threadId,
+          objective: event.payload.objective,
+        });
+        yield* syncGoal(goal);
+        return;
+      }
+      if (event.type === "thread.goal-clear-requested") {
+        yield* providerService.clearGoal({ threadId: event.payload.threadId });
+        yield* syncGoal(null);
+        return;
+      }
+      const goal = yield* providerService.getGoal({ threadId: event.payload.threadId });
+      yield* syncGoal(goal);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.goal.failed",
+          summary: "Provider goal request failed",
+          detail: Cause.pretty(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+  });
+
   const processDomainEvent = (event: ProviderIntentEvent) =>
     Effect.gen(function* () {
       switch (event.type) {
@@ -733,6 +887,11 @@ const make = Effect.gen(function* () {
         case "thread.session-stop-requested":
           yield* processSessionStopRequested(event);
           return;
+        case "thread.goal-set-requested":
+        case "thread.goal-get-requested":
+        case "thread.goal-clear-requested":
+          yield* processGoalRequested(event);
+          return;
       }
     });
 
@@ -759,7 +918,10 @@ const make = Effect.gen(function* () {
         event.type !== "thread.turn-interrupt-requested" &&
         event.type !== "thread.approval-response-requested" &&
         event.type !== "thread.user-input-response-requested" &&
-        event.type !== "thread.session-stop-requested"
+        event.type !== "thread.session-stop-requested" &&
+        event.type !== "thread.goal-set-requested" &&
+        event.type !== "thread.goal-get-requested" &&
+        event.type !== "thread.goal-clear-requested"
       ) {
         return Effect.void;
       }

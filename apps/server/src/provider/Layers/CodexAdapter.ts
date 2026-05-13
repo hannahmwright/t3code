@@ -11,6 +11,7 @@ import {
   type CanonicalRequestType,
   type ProviderEvent,
   type ProviderRuntimeEvent,
+  type ThreadGoalSnapshot,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
   RuntimeItemId,
@@ -108,6 +109,10 @@ function asArray(value: unknown): unknown[] | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | undefined {
@@ -567,6 +572,51 @@ function mapItemLifecycle(
   };
 }
 
+function normalizeCodexGoal(value: unknown): ThreadGoalSnapshot | null {
+  const goal = asObject(value);
+  if (!goal) {
+    return null;
+  }
+  const objective = asString(goal.objective);
+  const status = normalizeCodexGoalStatus(asString(goal.status));
+  const createdAt = asString(goal.createdAt) ?? asString(goal.created_at);
+  const updatedAt = asString(goal.updatedAt) ?? asString(goal.updated_at);
+  if (!objective || !status || !createdAt || !updatedAt) {
+    return null;
+  }
+  const tokenBudget =
+    asNonNegativeInteger(goal.tokenBudget) ?? asNonNegativeInteger(goal.token_budget);
+  const tokensUsed =
+    asNonNegativeInteger(goal.tokensUsed) ?? asNonNegativeInteger(goal.tokens_used);
+  const timeUsedSeconds =
+    asNonNegativeInteger(goal.timeUsedSeconds) ?? asNonNegativeInteger(goal.time_used_seconds);
+  return {
+    ...(asString(goal.threadId) || asString(goal.thread_id)
+      ? { providerThreadId: asString(goal.threadId) ?? asString(goal.thread_id)! }
+      : {}),
+    objective,
+    status,
+    ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+    ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+    ...(timeUsedSeconds !== undefined ? { timeUsedSeconds } : {}),
+    createdAt,
+    updatedAt,
+  };
+}
+
+function normalizeCodexGoalStatus(status: string | undefined): ThreadGoalSnapshot["status"] | null {
+  const normalized = status === "budget_limited" ? "budgetLimited" : status;
+  if (
+    normalized === "active" ||
+    normalized === "paused" ||
+    normalized === "budgetLimited" ||
+    normalized === "complete"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
@@ -763,6 +813,32 @@ function mapToRuntimeEvents(
         payload: {
           usage: normalizedUsage,
         },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/updated") {
+    const normalizedGoal = normalizeCodexGoal(asObject(payload?.goal) ?? event.payload);
+    if (!normalizedGoal) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.goal.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          goal: normalizedGoal,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/cleared") {
+    return [
+      {
+        type: "thread.goal.cleared",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {},
       },
     ];
   }
@@ -1498,6 +1574,24 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         catch: (cause) => toRequestError(threadId, "item/tool/requestUserInput", cause),
       });
 
+    const setGoal: CodexAdapterShape["setGoal"] = (threadId, objective) =>
+      Effect.tryPromise({
+        try: () => manager.setGoal(threadId, objective),
+        catch: (cause) => toRequestError(threadId, "thread/goal/set", cause),
+      });
+
+    const getGoal: CodexAdapterShape["getGoal"] = (threadId) =>
+      Effect.tryPromise({
+        try: () => manager.getGoal(threadId),
+        catch: (cause) => toRequestError(threadId, "thread/goal/get", cause),
+      });
+
+    const clearGoal: CodexAdapterShape["clearGoal"] = (threadId) =>
+      Effect.tryPromise({
+        try: () => manager.clearGoal(threadId),
+        catch: (cause) => toRequestError(threadId, "thread/goal/clear", cause),
+      });
+
     const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
       Effect.sync(() => {
         manager.stopSession(threadId);
@@ -1566,6 +1660,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       rollbackThread,
       respondToRequest,
       respondToUserInput,
+      setGoal,
+      getGoal,
+      clearGoal,
       stopSession,
       listSessions,
       hasSession,

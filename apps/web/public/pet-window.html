@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>T3 Code Pet</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      body {
+        -webkit-app-region: drag;
+        user-select: none;
+      }
+
+      #pet-root,
+      .pet-wrap {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+
+      .mascot-wrap {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 112px;
+        height: 121px;
+      }
+
+      .pet-wrap.has-status .mascot-wrap {
+        top: 32px;
+      }
+
+      .pet-stage {
+        width: 112px;
+        height: 121px;
+        filter: drop-shadow(0 10px 16px rgb(0 0 0 / 0.22));
+      }
+
+      .usage-rings {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        overflow: visible;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+
+      .usage-rings.is-visible {
+        opacity: 1;
+      }
+
+      .usage-ring-track,
+      .usage-ring-value {
+        fill: none;
+        stroke-linecap: round;
+        transform: rotate(-90deg);
+        transform-origin: 56px 60.5px;
+      }
+
+      .usage-ring-track {
+        stroke: rgb(40 40 40 / 0.16);
+      }
+
+      .usage-ring-value {
+        transition:
+          stroke 180ms ease,
+          stroke-dashoffset 220ms ease;
+      }
+
+      .pet-sprite {
+        background-image: var(--sprite-url);
+        background-repeat: no-repeat;
+        background-size: 800% 900%;
+        image-rendering: pixelated;
+        width: 100%;
+        height: 100%;
+      }
+
+      .empty-state {
+        box-sizing: border-box;
+        max-width: 164px;
+        border: 1px solid rgb(140 140 140 / 0.28);
+        border-radius: 10px;
+        background: rgb(248 248 248 / 0.88);
+        padding: 10px 12px;
+        color: #252525;
+        font-size: 12px;
+        line-height: 1.35;
+        text-align: center;
+        box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+      }
+
+      .status-card {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        box-sizing: border-box;
+        width: 246px;
+        min-height: 88px;
+        border: 1px solid rgb(255 255 255 / 0.34);
+        border-radius: 18px;
+        background: rgb(42 36 53 / 0.97);
+        color: rgb(242 236 255);
+        opacity: 0;
+        padding: 12px 36px 12px 18px;
+        pointer-events: none;
+        transform: translateY(8px) scale(0.98);
+        transform-origin: bottom left;
+        transition:
+          opacity 160ms ease,
+          transform 160ms ease;
+        box-shadow:
+          0 18px 50px rgb(0 0 0 / 0.28),
+          inset 0 1px 0 rgb(255 255 255 / 0.1);
+      }
+
+      .pet-wrap.has-status .status-card {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      .status-title {
+        overflow: hidden;
+        color: rgb(239 231 255);
+        font-size: 20px;
+        font-weight: 700;
+        line-height: 1.1;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-detail {
+        display: -webkit-box;
+        margin-top: 6px;
+        overflow: hidden;
+        color: rgb(228 218 246);
+        font-size: 16px;
+        line-height: 1.2;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+
+      .status-spinner {
+        position: absolute;
+        top: 18px;
+        right: 15px;
+        width: 15px;
+        height: 15px;
+        border: 2px solid rgb(216 207 231 / 0.45);
+        border-top-color: rgb(216 207 231);
+        border-radius: 999px;
+        opacity: 0;
+      }
+
+      .status-card.is-loading .status-spinner {
+        animation: status-spin 880ms linear infinite;
+        opacity: 1;
+      }
+
+      .status-card.is-waiting .status-spinner,
+      .status-card.is-failed .status-spinner,
+      .status-card.is-review .status-spinner {
+        opacity: 1;
+      }
+
+      .status-card.is-waiting .status-spinner {
+        border-color: rgb(245 158 11 / 0.35);
+        border-top-color: rgb(245 158 11);
+      }
+
+      .status-card.is-failed .status-spinner {
+        border-color: rgb(239 68 68 / 0.35);
+        border-top-color: rgb(239 68 68);
+      }
+
+      .status-card.is-review .status-spinner {
+        border-color: rgb(34 197 94 / 0.35);
+        border-top-color: rgb(34 197 94);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .empty-state {
+          background: rgb(28 28 28 / 0.86);
+          color: #f1f1f1;
+        }
+      }
+
+      @keyframes status-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="pet-root" aria-live="polite"></main>
+    <script type="module" src="/pet-window.js"></script>
+  </body>
+</html>

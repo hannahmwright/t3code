@@ -24,6 +24,7 @@ import {
   ThreadActivityAppendedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadGoalSyncedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -346,6 +347,7 @@ export function projectEvent(
             title: payload.title,
             emoji: payload.emoji,
             color: payload.color ?? null,
+            setAside: payload.setAside ?? false,
             workbookId,
             groupName: workbookMetadata.groupName,
             groupEmoji: workbookMetadata.groupEmoji,
@@ -417,6 +419,7 @@ export function projectEvent(
                     ...(payload.title !== undefined ? { title: payload.title } : {}),
                     ...(payload.emoji !== undefined ? { emoji: payload.emoji } : {}),
                     ...(payload.color !== undefined ? { color: payload.color } : {}),
+                    ...(payload.setAside !== undefined ? { setAside: payload.setAside } : {}),
                     ...(payload.workbookId !== undefined ? { workbookId: payload.workbookId } : {}),
                     groupName: nextWorkbookId === null ? nextGroupName : workbookMetadata.groupName,
                     groupEmoji:
@@ -465,12 +468,14 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            sidechatSourceThreadId: payload.sidechatSourceThreadId,
             title: payload.title,
             model: payload.model,
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            goal: payload.goal ?? null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -539,6 +544,17 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             interactionMode: payload.interactionMode,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.goal-synced":
+      return decodeForEvent(ThreadGoalSyncedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            goal: payload.goal,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -794,11 +810,19 @@ export function projectEvent(
         ]
           .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
           .slice(-MAX_THREAD_CHECKPOINTS);
+        const isRunningSessionPlaceholder =
+          payload.status === "missing" &&
+          thread.session?.status === "running" &&
+          thread.session.activeTurnId !== null;
+        const isActiveRunningPlaceholder =
+          isRunningSessionPlaceholder && thread.session?.activeTurnId === payload.turnId;
+        const isStaleRunningPlaceholder =
+          isRunningSessionPlaceholder && thread.session?.activeTurnId !== payload.turnId;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(thread.session
+            ...(thread.session && !isRunningSessionPlaceholder
               ? {
                   session: {
                     ...thread.session,
@@ -808,20 +832,26 @@ export function projectEvent(
                 }
               : {}),
             checkpoints,
-            latestTurn: {
-              turnId: payload.turnId,
-              state: checkpointStatusToLatestTurnState(payload.status),
-              requestedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? thread.latestTurn.requestedAt
-                  : payload.completedAt,
-              startedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? (thread.latestTurn.startedAt ?? payload.completedAt)
-                  : payload.completedAt,
-              completedAt: payload.completedAt,
-              assistantMessageId: payload.assistantMessageId,
-            },
+            latestTurn: isStaleRunningPlaceholder
+              ? thread.latestTurn
+              : {
+                  turnId: payload.turnId,
+                  state: isActiveRunningPlaceholder
+                    ? "running"
+                    : checkpointStatusToLatestTurnState(payload.status),
+                  requestedAt:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? thread.latestTurn.requestedAt
+                      : payload.completedAt,
+                  startedAt:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? (thread.latestTurn.startedAt ?? payload.completedAt)
+                      : payload.completedAt,
+                  completedAt: isActiveRunningPlaceholder
+                    ? (thread.latestTurn?.completedAt ?? null)
+                    : payload.completedAt,
+                  assistantMessageId: payload.assistantMessageId,
+                },
             updatedAt: event.occurredAt,
           }),
         };

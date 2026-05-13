@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationProposedPlanId,
@@ -19,6 +20,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -26,6 +28,10 @@ import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
+import {
+  buildVisualProofRunPayload,
+  failUnfinishedVisualProofRunsForTurn,
+} from "../../visualProof.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
@@ -485,6 +491,27 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "account.rate-limits.updated": {
+      if (event.provider !== "codex") {
+        return [];
+      }
+
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "codex.rate-limits.updated",
+          summary: "Codex usage limits updated",
+          payload: {
+            rateLimits: event.payload.rateLimits,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "item.updated": {
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
@@ -561,6 +588,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const providerSessionRuntimeRepository = yield* ProviderSessionRuntimeRepository;
 
   const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
     DEFAULT_ASSISTANT_DELIVERY_MODE,
@@ -1198,6 +1226,33 @@ const make = Effect.gen(function* () {
             turnId,
             updatedAt: now,
           });
+
+          const failedProofRuns = failUnfinishedVisualProofRunsForTurn({
+            threadId: thread.id,
+            turnId,
+            summary:
+              "Visual proof was requested for this turn, but no proof artifacts were captured.",
+          });
+          yield* Effect.forEach(
+            failedProofRuns,
+            (run) =>
+              orchestrationEngine.dispatch({
+                type: "thread.activity.append",
+                commandId: providerCommandId(event, "visual-proof-missing-artifacts"),
+                threadId: thread.id,
+                activity: {
+                  id: EventId.makeUnsafe(`visual-proof:${crypto.randomUUID()}`),
+                  tone: "error",
+                  kind: "visual-proof.failed",
+                  summary: "Visual proof failed",
+                  payload: buildVisualProofRunPayload(run),
+                  turnId,
+                  createdAt: run.updatedAt,
+                },
+                createdAt: run.updatedAt,
+              }),
+            { concurrency: 1 },
+          );
         }
       }
 
@@ -1238,6 +1293,16 @@ const make = Effect.gen(function* () {
           commandId: providerCommandId(event, "thread-meta-update"),
           threadId: thread.id,
           title: event.payload.name,
+        });
+      }
+
+      if (event.type === "thread.goal.updated" || event.type === "thread.goal.cleared") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.sync",
+          commandId: providerCommandId(event, "thread-goal-sync"),
+          threadId: thread.id,
+          goal: event.type === "thread.goal.updated" ? event.payload.goal : null,
+          createdAt: now,
         });
       }
 
@@ -1313,7 +1378,69 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
+  const reconcilePersistedProviderRuntime = Effect.gen(function* () {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const runtimes = yield* providerSessionRuntimeRepository.list();
+    const runtimeByThreadId = new Map(runtimes.map((runtime) => [runtime.threadId, runtime]));
+
+    yield* Effect.forEach(
+      readModel.threads,
+      (thread) =>
+        Effect.gen(function* () {
+          const session = thread.session;
+          if (!session || (session.status !== "starting" && session.status !== "running")) {
+            return;
+          }
+
+          const runtime = runtimeByThreadId.get(thread.id);
+          if (!runtime || (runtime.status !== "stopped" && runtime.status !== "error")) {
+            return;
+          }
+
+          const runtimePayload =
+            runtime.runtimePayload &&
+            typeof runtime.runtimePayload === "object" &&
+            !Array.isArray(runtime.runtimePayload)
+              ? (runtime.runtimePayload as Record<string, unknown>)
+              : {};
+          const status = runtime.status === "error" ? "error" : "stopped";
+          const lastError =
+            status === "error" && typeof runtimePayload.lastError === "string"
+              ? runtimePayload.lastError
+              : null;
+
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.makeUnsafe(
+              `provider-runtime-reconcile:${thread.id}:${runtime.lastSeenAt}`,
+            ),
+            threadId: thread.id,
+            session: {
+              threadId: thread.id,
+              status,
+              providerName: runtime.providerName,
+              runtimeMode: runtime.runtimeMode,
+              activeTurnId: null,
+              canInterrupt: false,
+              lastError,
+              updatedAt: runtime.lastSeenAt,
+            },
+            createdAt: runtime.lastSeenAt,
+          });
+        }),
+      { concurrency: 1 },
+    ).pipe(Effect.asVoid);
+  });
+
   const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
+    yield* reconcilePersistedProviderRuntime.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider runtime ingestion failed to reconcile persisted sessions", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) =>
         worker.enqueue({ source: "runtime", event }),

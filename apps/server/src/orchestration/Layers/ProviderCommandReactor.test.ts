@@ -30,6 +30,7 @@ import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
 import { TextGeneration, type TextGenerationShape } from "../../git/Services/TextGeneration.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProviderCommandReactorLive } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
@@ -159,6 +160,16 @@ describe("ProviderCommandReactor", () => {
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
+    const setGoal = vi.fn<ProviderServiceShape["setGoal"]>((input) =>
+      Effect.succeed({
+        objective: input.objective,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    const getGoal = vi.fn<ProviderServiceShape["getGoal"]>(() => Effect.succeed(null));
+    const clearGoal = vi.fn<ProviderServiceShape["clearGoal"]>(() => Effect.succeed(true));
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
         const threadId =
@@ -201,7 +212,11 @@ describe("ProviderCommandReactor", () => {
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
+      setGoal,
+      getGoal,
+      clearGoal,
       stopSession: stopSession as ProviderServiceShape["stopSession"],
+      stopAllSessions: () => Effect.void,
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (provider) =>
         Effect.succeed({
@@ -212,6 +227,7 @@ describe("ProviderCommandReactor", () => {
     };
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -269,6 +285,9 @@ describe("ProviderCommandReactor", () => {
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      setGoal,
+      getGoal,
+      clearGoal,
       stopSession,
       renameBranch,
       generateBranchName,
@@ -311,6 +330,49 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("enables visual proof for demo-like turns without changing the persisted user text", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-proof"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-proof"),
+          role: "user",
+          text: "please show me a screenshot proof of the app working",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const providerInput = harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined;
+    expect(providerInput?.input).toContain("T3 Visual Proof Enabled");
+    expect(providerInput?.input).toContain("/api/visual-proof/");
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
+      return (
+        thread?.activities.some((activity) => activity.kind === "visual-proof.started") ?? false
+      );
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.messages.find((message) => message.id === "user-message-proof")?.text).toBe(
+      "please show me a screenshot proof of the app working",
+    );
   });
 
   it("forwards codex model options through session start and turn send", async () => {
@@ -1321,6 +1383,50 @@ describe("ProviderCommandReactor", () => {
         (activity.payload as Record<string, unknown>).requestId === "user-input-request-1",
     );
     expect(resolvedActivity).toBeUndefined();
+  });
+
+  it("records a visible thread activity when a goal is requested", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.goal.set",
+        commandId: CommandId.makeUnsafe("cmd-goal-set-visible"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        objective: "Make the canvas feel polished",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
+      return Boolean(
+        thread?.activities.some((activity) => activity.kind === "thread.goal.set.requested"),
+      );
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    const activity = thread?.activities.find((entry) => entry.kind === "thread.goal.set.requested");
+
+    expect(harness.setGoal).toHaveBeenCalledWith({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      objective: "Make the canvas feel polished",
+    });
+    expect(activity).toMatchObject({
+      tone: "info",
+      summary: "Goal requested",
+      payload: {
+        action: "set",
+        objective: "Make the canvas feel polished",
+        detail: "Make the canvas feel polished",
+      },
+      turnId: null,
+    });
   });
 
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {

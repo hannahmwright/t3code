@@ -17,6 +17,7 @@ export const ProjectionProject = Schema.Struct({
   title: Schema.String,
   emoji: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
   color: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  setAside: Schema.optional(Schema.Boolean).pipe(Schema.withDecodingDefault(() => false)),
   workbookId: Schema.NullOr(WorkbookId).pipe(Schema.withDecodingDefault(() => null)),
   groupName: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
   groupEmoji: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),

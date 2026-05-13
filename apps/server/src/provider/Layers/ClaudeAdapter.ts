@@ -321,19 +321,25 @@ function normalizeClaudeTokenUsage(
       ? record.output_tokens
       : 0;
   const derivedUsedTokens = inputTokens + outputTokens;
-  const usedTokens = directUsedTokens ?? (derivedUsedTokens > 0 ? derivedUsedTokens : undefined);
-  if (usedTokens === undefined || usedTokens <= 0) {
+  const totalProcessedTokens =
+    directUsedTokens ?? (derivedUsedTokens > 0 ? derivedUsedTokens : undefined);
+  if (totalProcessedTokens === undefined || totalProcessedTokens <= 0) {
     return undefined;
   }
+  const maxTokens =
+    typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
+      ? contextWindow
+      : undefined;
+  const usedTokens =
+    maxTokens !== undefined ? Math.min(totalProcessedTokens, maxTokens) : totalProcessedTokens;
 
   return {
     usedTokens,
     lastUsedTokens: usedTokens,
+    ...(totalProcessedTokens > usedTokens ? { totalProcessedTokens } : {}),
     ...(inputTokens > 0 ? { inputTokens } : {}),
     ...(outputTokens > 0 ? { outputTokens } : {}),
-    ...(typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
-      ? { maxTokens: contextWindow }
-      : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(typeof record.tool_uses === "number" && Number.isFinite(record.tool_uses)
       ? { toolUses: record.tool_uses }
       : {}),
@@ -3022,6 +3028,33 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         yield* Deferred.succeed(pending.answers, answers);
       });
 
+    const setGoal: ClaudeAdapterShape["setGoal"] = (threadId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/goal/set",
+          detail: `Provider '${PROVIDER}' does not support goals for thread '${threadId}'.`,
+        }),
+      );
+
+    const getGoal: ClaudeAdapterShape["getGoal"] = (threadId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/goal/get",
+          detail: `Provider '${PROVIDER}' does not support goals for thread '${threadId}'.`,
+        }),
+      );
+
+    const clearGoal: ClaudeAdapterShape["clearGoal"] = (threadId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/goal/clear",
+          detail: `Provider '${PROVIDER}' does not support goals for thread '${threadId}'.`,
+        }),
+      );
+
     const stopSession: ClaudeAdapterShape["stopSession"] = (threadId) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
@@ -3072,6 +3105,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       rollbackThread,
       respondToRequest,
       respondToUserInput,
+      setGoal,
+      getGoal,
+      clearGoal,
       stopSession,
       listSessions,
       hasSession,

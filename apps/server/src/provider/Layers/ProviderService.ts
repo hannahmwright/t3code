@@ -12,6 +12,9 @@
 import {
   NonNegativeInt,
   ThreadId,
+  ProviderGoalClearInput,
+  ProviderGoalGetInput,
+  ProviderGoalSetInput,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -21,7 +24,8 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, PubSub, Queue, Schema, SchemaIssue, Stream } from "effect";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { Cause, Effect, Layer, Option, PubSub, Ref, Schema, SchemaIssue, Stream } from "effect";
 
 import { ProviderValidationError } from "../Errors.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
@@ -156,8 +160,8 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const registry = yield* ProviderAdapterRegistry;
     const directory = yield* ProviderSessionDirectory;
-    const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+    const stopAllStarted = yield* Ref.make(false);
 
     const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       Effect.succeed(event).pipe(
@@ -194,15 +198,12 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       publishRuntimeEvent(event);
 
-    const worker = Effect.forever(
-      Queue.take(runtimeEventQueue).pipe(Effect.flatMap(processRuntimeEvent)),
-    );
-    yield* Effect.forkScoped(worker);
+    const worker = yield* makeDrainableWorker(processRuntimeEvent);
 
     yield* Effect.forEach(adapters, (adapter) =>
-      Stream.runForEach(adapter.streamEvents, (event) =>
-        Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid),
-      ).pipe(Effect.forkScoped),
+      Stream.runForEach(adapter.streamEvents, (event) => worker.enqueue(event)).pipe(
+        Effect.forkScoped,
+      ),
     ).pipe(Effect.asVoid);
 
     const recoverSessionForThread = (input: {
@@ -439,6 +440,66 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* routed.adapter.respondToUserInput(routed.threadId, input.requestId, input.answers);
       });
 
+    const setGoal: ProviderServiceShape["setGoal"] = (rawInput) =>
+      Effect.gen(function* () {
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.setGoal",
+          schema: ProviderGoalSetInput,
+          payload: rawInput,
+        });
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.setGoal",
+          allowRecovery: true,
+        });
+        yield* Effect.annotateCurrentSpan({
+          "provider.operation": "set-goal",
+          "provider.kind": routed.adapter.provider,
+          "provider.thread_id": input.threadId,
+        });
+        return yield* routed.adapter.setGoal(routed.threadId, input.objective);
+      });
+
+    const getGoal: ProviderServiceShape["getGoal"] = (rawInput) =>
+      Effect.gen(function* () {
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.getGoal",
+          schema: ProviderGoalGetInput,
+          payload: rawInput,
+        });
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.getGoal",
+          allowRecovery: true,
+        });
+        yield* Effect.annotateCurrentSpan({
+          "provider.operation": "get-goal",
+          "provider.kind": routed.adapter.provider,
+          "provider.thread_id": input.threadId,
+        });
+        return yield* routed.adapter.getGoal(routed.threadId);
+      });
+
+    const clearGoal: ProviderServiceShape["clearGoal"] = (rawInput) =>
+      Effect.gen(function* () {
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.clearGoal",
+          schema: ProviderGoalClearInput,
+          payload: rawInput,
+        });
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.clearGoal",
+          allowRecovery: true,
+        });
+        yield* Effect.annotateCurrentSpan({
+          "provider.operation": "clear-goal",
+          "provider.kind": routed.adapter.provider,
+          "provider.thread_id": input.threadId,
+        });
+        return yield* routed.adapter.clearGoal(routed.threadId);
+      });
+
     const stopSession: ProviderServiceShape["stopSession"] = (rawInput) =>
       Effect.gen(function* () {
         const input = yield* decodeInputOrValidationError({
@@ -547,6 +608,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           }),
         ).pipe(Effect.asVoid);
         yield* Effect.forEach(adapters, (adapter) => adapter.stopAll()).pipe(Effect.asVoid);
+        yield* worker.drain;
         yield* Effect.forEach(threadIds, (threadId) =>
           directory.getProvider(threadId).pipe(
             Effect.flatMap((provider) =>
@@ -569,11 +631,15 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* analytics.flush;
       });
 
-    yield* Effect.addFinalizer(() =>
-      Effect.catch(runStopAll(), (cause) =>
-        Effect.logWarning("failed to stop provider service", { cause }),
-      ),
-    );
+    const stopAllSessions: ProviderServiceShape["stopAllSessions"] = () =>
+      Ref.modify(stopAllStarted, (alreadyStarted) => [alreadyStarted, true] as const).pipe(
+        Effect.flatMap((alreadyStarted) => (alreadyStarted ? Effect.void : runStopAll())),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("failed to stop provider service", { cause: Cause.pretty(cause) }),
+        ),
+      );
+
+    yield* Effect.addFinalizer(() => stopAllSessions());
 
     return {
       startSession,
@@ -581,7 +647,11 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      setGoal,
+      getGoal,
+      clearGoal,
       stopSession,
+      stopAllSessions,
       listSessions,
       getCapabilities,
       rollbackConversation,

@@ -186,10 +186,37 @@ describe("classifyCodexStderrLine", () => {
     expect(classifyCodexStderrLine(line)).toBeNull();
   });
 
+  it("ignores non-error JSON codex logs", () => {
+    const line = JSON.stringify({
+      timestamp: "2026-05-04T00:48:28.389203Z",
+      level: "WARN",
+      fields: {
+        message: "ignoring interface.defaultPrompt: prompt must be at most 128 characters",
+        path: "/Users/hannahwright/.codex/.tmp/plugins/plugin.json",
+      },
+      target: "codex_core_plugins::manifest",
+    });
+
+    expect(classifyCodexStderrLine(line)).toBeNull();
+  });
+
   it("ignores known benign rollout path errors", () => {
     const line =
       "\u001b[2m2026-02-08T04:24:20.085687Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_core::rollout::list\u001b[0m: state db missing rollout path for thread 019c3b6c-46b8-7b70-ad23-82f824d161fb";
     expect(classifyCodexStderrLine(line)).toBeNull();
+  });
+
+  it("keeps unknown JSON codex errors", () => {
+    const line = JSON.stringify({
+      timestamp: "2026-05-04T00:48:28.389203Z",
+      level: "ERROR",
+      fields: { message: "unrecoverable failure" },
+      target: "codex_core::runtime",
+    });
+
+    expect(classifyCodexStderrLine(line)).toEqual({
+      message: line,
+    });
   });
 
   it("keeps unknown structured errors", () => {
@@ -708,6 +735,85 @@ describe("thread checkpoint control", () => {
       threadId: "thread_1",
       turns: [],
     });
+  });
+});
+
+describe("thread goals", () => {
+  it("sets goals using the provider resume thread id", async () => {
+    const { manager, context, sendRequest } = createThreadControlHarness();
+    sendRequest.mockResolvedValue({
+      goal: {
+        threadId: "thread_1",
+        objective: "Ship goal support",
+        status: "active",
+        tokenBudget: 1000,
+        tokensUsed: 12,
+        timeUsedSeconds: 3,
+        createdAt: "2026-05-09T00:00:00.000Z",
+        updatedAt: "2026-05-09T00:00:00.000Z",
+      },
+    });
+
+    const goal = await manager.setGoal(asThreadId("thread_1"), " Ship goal support ");
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "thread/goal/set", {
+      threadId: "thread_1",
+      objective: "Ship goal support",
+    });
+    expect(goal).toEqual({
+      providerThreadId: "thread_1",
+      objective: "Ship goal support",
+      status: "active",
+      tokenBudget: 1000,
+      tokensUsed: 12,
+      timeUsedSeconds: 3,
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    });
+  });
+
+  it("gets and clears goals using the provider resume thread id", async () => {
+    const { manager, context, sendRequest } = createThreadControlHarness();
+    sendRequest
+      .mockResolvedValueOnce({
+        goal: {
+          thread_id: "thread_1",
+          objective: "Keep it tidy",
+          status: "budget_limited",
+          token_budget: 1000,
+          tokens_used: 1000,
+          time_used_seconds: 42,
+          created_at: "2026-05-09T00:00:00.000Z",
+          updated_at: "2026-05-09T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({ cleared: true });
+
+    await expect(manager.getGoal(asThreadId("thread_1"))).resolves.toEqual({
+      providerThreadId: "thread_1",
+      objective: "Keep it tidy",
+      status: "budgetLimited",
+      tokenBudget: 1000,
+      tokensUsed: 1000,
+      timeUsedSeconds: 42,
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    });
+    await manager.clearGoal(asThreadId("thread_1"));
+
+    expect(sendRequest).toHaveBeenNthCalledWith(1, context, "thread/goal/get", {
+      threadId: "thread_1",
+    });
+    expect(sendRequest).toHaveBeenNthCalledWith(2, context, "thread/goal/clear", {
+      threadId: "thread_1",
+    });
+  });
+
+  it("returns null when no goal is set", async () => {
+    const { manager, sendRequest } = createThreadControlHarness();
+    sendRequest.mockResolvedValue({ goal: null });
+
+    await expect(manager.getGoal(asThreadId("thread_1"))).resolves.toBeNull();
   });
 });
 

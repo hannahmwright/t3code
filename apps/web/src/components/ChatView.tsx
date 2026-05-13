@@ -42,9 +42,11 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  parseComposerGoalSlashCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
+import { openPetCompanion } from "../petCompanion";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -82,6 +84,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type Thread,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath } from "../vscode-icons";
@@ -169,8 +172,11 @@ import {
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
+  buildAgentReviewPrompt,
+  buildAgentReviewRelayPrompt,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildSidechatProviderMessage,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
@@ -186,6 +192,7 @@ import {
   shouldResetSendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useSplitViewStore } from "../splitViewStore";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -197,6 +204,27 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+
+function formatGoalStatus(status: NonNullable<Thread["goal"]>["status"]): string {
+  return status === "budgetLimited" ? "budget limited" : status;
+}
+
+function formatGoalUsage(goal: NonNullable<Thread["goal"]>): string | null {
+  const parts: string[] = [];
+  if (goal.tokensUsed !== undefined) {
+    parts.push(
+      goal.tokenBudget !== undefined && goal.tokenBudget !== null
+        ? `${goal.tokensUsed.toLocaleString()} / ${goal.tokenBudget.toLocaleString()} tokens`
+        : `${goal.tokensUsed.toLocaleString()} tokens`,
+    );
+  }
+  if (goal.timeUsedSeconds !== undefined) {
+    const minutes = Math.floor(goal.timeUsedSeconds / 60);
+    const seconds = goal.timeUsedSeconds % 60;
+    parts.push(minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`);
+  }
+  return parts.length > 0 ? parts.join(" / ") : null;
+}
 
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
@@ -249,12 +277,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const projects = useStore((store) => store.projects);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
+  const syncServerThread = useStore((store) => store.syncServerThread);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
   const setStickyComposerModel = useComposerDraftStore((store) => store.setStickyModel);
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  const createSplitFromDrop = useSplitViewStore((store) => store.createFromDrop);
   const rawSearch = useSearch({
     strict: false,
     select: (params) => parseDiffRouteSearch(params),
@@ -392,6 +422,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const hydratingThreadIdsRef = useRef(new Set<ThreadId>());
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -492,6 +523,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
     [activeThread?.activities],
   );
+
+  useEffect(() => {
+    if (!activeThread || activeThread.detailsLoaded) return;
+    if (hydratingThreadIdsRef.current.has(activeThread.id)) return;
+    const api = readNativeApi();
+    if (!api) return;
+
+    hydratingThreadIdsRef.current.add(activeThread.id);
+    api.orchestration
+      .getThreadSnapshot({ threadId: activeThread.id })
+      .then(({ thread }) => {
+        syncServerThread(thread);
+      })
+      .catch((error) => {
+        setStoreThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to load thread details.",
+        );
+      })
+      .finally(() => {
+        hydratingThreadIdsRef.current.delete(activeThread.id);
+      });
+  }, [activeThread, setStoreThreadError, syncServerThread]);
+
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
   const activeProjectThemeStyle = useMemo(
@@ -629,6 +684,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
+  const canSelectDraftProject = isLocalDraftThread && !hasThreadStarted;
+  const draftProjectSelectValue = activeThread?.projectId ?? "";
+  const onDraftProjectSelect = useCallback(
+    (projectIdValue: string) => {
+      if (!activeThread || !canSelectDraftProject) return;
+      const selectedProject = projects.find((project) => project.id === projectIdValue) ?? null;
+      setDraftThreadContext(activeThread.id, {
+        projectId: selectedProject?.id ?? null,
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+      });
+    },
+    [activeThread, canSelectDraftProject, projects, setDraftThreadContext],
+  );
   const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
@@ -1080,7 +1150,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
-      const slashCommandItems = [
+      const slashCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = [
         {
           id: "slash:model",
           type: "slash-command",
@@ -1102,7 +1172,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
-      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+        {
+          id: "slash:goal",
+          type: "slash-command",
+          command: "goal",
+          label: "/goal",
+          description: "View, set, or clear this thread goal",
+        },
+      ];
+      if (isElectron) {
+        slashCommandItems.push({
+          id: "slash:pet",
+          type: "slash-command",
+          command: "pet",
+          label: "/pet",
+          description: "Show or hide the desktop pet",
+        });
+      }
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
         return [...slashCommandItems];
@@ -2422,12 +2508,152 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return;
     }
-    const standaloneSlashCommand =
+    const parsedStandaloneSlashCommand =
       composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
+    const goalSlashCommand =
+      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+        ? parseComposerGoalSlashCommand(trimmed)
+        : null;
+    if (
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      /^\/goal(?:\s|$)/i.test(trimmed) &&
+      !goalSlashCommand
+    ) {
+      toastManager.add({
+        type: "warning",
+        title: "Goal command not supported",
+        description: "Use /goal, /goal clear, or /goal followed by an objective.",
+      });
+      return;
+    }
+    if (goalSlashCommand) {
+      const api = readNativeApi();
+      if (!api) return;
+      const createdAt = new Date().toISOString();
+      try {
+        if (goalSlashCommand.action === "show") {
+          if (isLocalDraftThread) {
+            toastManager.add({
+              type: "info",
+              title: "No active goal",
+              description: "This thread does not have a goal yet.",
+            });
+            promptRef.current = "";
+            clearComposerDraftContent(activeThread.id);
+            setComposerHighlightedItemId(null);
+            setComposerCursor(0);
+            setComposerTrigger(null);
+            return;
+          }
+          await api.orchestration.dispatchCommand({
+            type: "thread.goal.get",
+            commandId: newCommandId(),
+            threadId: activeThread.id,
+            createdAt,
+          });
+          const goal = activeThread.goal;
+          toastManager.add({
+            type: "info",
+            title: goal ? `Goal: ${formatGoalStatus(goal.status)}` : "No active goal",
+            description: goal?.objective ?? "This thread does not have a goal yet.",
+          });
+          promptRef.current = "";
+          clearComposerDraftContent(activeThread.id);
+          setComposerHighlightedItemId(null);
+          setComposerCursor(0);
+          setComposerTrigger(null);
+          return;
+        }
+        if (goalSlashCommand.action === "clear") {
+          if (isLocalDraftThread) {
+            toastManager.add({
+              type: "info",
+              title: "No active goal",
+              description: "This thread does not have a goal to clear yet.",
+            });
+            promptRef.current = "";
+            clearComposerDraftContent(activeThread.id);
+            setComposerHighlightedItemId(null);
+            setComposerCursor(0);
+            setComposerTrigger(null);
+            return;
+          }
+          await api.orchestration.dispatchCommand({
+            type: "thread.goal.clear",
+            commandId: newCommandId(),
+            threadId: activeThread.id,
+            createdAt,
+          });
+          toastManager.add({
+            type: "info",
+            title: "Goal clear requested",
+            description: "The thread header will update after Codex confirms it.",
+          });
+          promptRef.current = "";
+          clearComposerDraftContent(activeThread.id);
+          setComposerHighlightedItemId(null);
+          setComposerCursor(0);
+          setComposerTrigger(null);
+          return;
+        }
+        if (isLocalDraftThread) {
+          const threadCreateModel: ModelSlug =
+            selectedModel || (activeProject?.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
+          await api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: activeThread.id,
+            projectId: activeProject?.id ?? activeThread.projectId ?? null,
+            sidechatSourceThreadId: activeThread.sidechatSourceThreadId ?? null,
+            title: truncateTitle(goalSlashCommand.objective),
+            model: threadCreateModel,
+            runtimeMode,
+            interactionMode,
+            branch: activeThread.branch,
+            worktreePath: activeThread.worktreePath,
+            createdAt: activeThread.createdAt,
+          });
+        }
+        await api.orchestration.dispatchCommand({
+          type: "thread.goal.set",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          objective: goalSlashCommand.objective,
+          createdAt,
+        });
+        toastManager.add({
+          type: "info",
+          title: "Goal set requested",
+          description: goalSlashCommand.objective,
+        });
+        promptRef.current = "";
+        clearComposerDraftContent(activeThread.id);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Goal command failed.";
+        setThreadError(activeThread.id, message);
+        toastManager.add({
+          type: "error",
+          title: "Goal command failed",
+          description: message,
+        });
+      }
+      return;
+    }
+    const standaloneSlashCommand =
+      parsedStandaloneSlashCommand === "pet" && !isElectron ? null : parsedStandaloneSlashCommand;
     if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
+      if (standaloneSlashCommand === "pet") {
+        void openPetCompanion();
+      } else {
+        handleInteractionModeChange(standaloneSlashCommand);
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -2449,7 +2675,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
-    if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -2461,12 +2686,44 @@ export default function ChatView({ threadId }: ChatViewProps) {
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
+    if (shouldCreateWorktree && !activeProject) {
+      setStoreThreadError(threadIdForSend, "Choose a project before sending in New worktree mode.");
+      return;
+    }
     if (shouldCreateWorktree && !activeThread.branch) {
       setStoreThreadError(
         threadIdForSend,
         "Select a base branch before sending in New worktree mode.",
       );
       return;
+    }
+
+    let sidechatSourceThreadForSend: {
+      title: string;
+      messages: ReadonlyArray<Pick<ChatMessage, "role" | "text">>;
+    } | null = null;
+    if (isFirstMessage && activeThread.sidechatSourceThreadId) {
+      const sourceThreadId = activeThread.sidechatSourceThreadId;
+      const cachedSourceThread = threads.find((thread) => thread.id === sourceThreadId) ?? null;
+      if (cachedSourceThread?.detailsLoaded) {
+        sidechatSourceThreadForSend = cachedSourceThread;
+      } else {
+        try {
+          const { thread } = await api.orchestration.getThreadSnapshot({
+            threadId: sourceThreadId,
+          });
+          syncServerThread(thread);
+          sidechatSourceThreadForSend = thread;
+        } catch (error) {
+          setThreadError(
+            threadIdForSend,
+            error instanceof Error
+              ? `Failed to load sidechat source: ${error.message}`
+              : "Failed to load sidechat source.",
+          );
+          return;
+        }
+      }
     }
 
     sendInFlightRef.current = true;
@@ -2485,6 +2742,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       effort: selectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
+    const providerMessageTextForSend = sidechatSourceThreadForSend
+      ? (buildSidechatProviderMessage({
+          userMessageText: outgoingMessageText,
+          sourceThread: sidechatSourceThreadForSend,
+        }) ?? undefined)
+      : undefined;
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
@@ -2541,7 +2804,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     let nextThreadWorktreePath = activeThread.worktreePath;
     await (async () => {
       // On first message: lock in branch + create worktree if needed.
-      if (baseBranchForWorktree) {
+      if (baseBranchForWorktree && activeProject) {
         beginSendPhase("preparing-worktree");
         const newBranch = buildTemporaryWorktreeBranchName();
         const result = await createWorktreeMutation.mutateAsync({
@@ -2584,14 +2847,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       const title = truncateTitle(titleSeed);
       let threadCreateModel: ModelSlug =
-        selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
+        selectedModel || (activeProject?.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
 
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
           threadId: threadIdForSend,
-          projectId: activeProject.id,
+          projectId: activeProject?.id ?? null,
+          sidechatSourceThreadId: activeThread.sidechatSourceThreadId ?? null,
           title,
           model: threadCreateModel,
           runtimeMode,
@@ -2604,7 +2868,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       let setupScript: ProjectScript | null = null;
-      if (baseBranchForWorktree) {
+      if (baseBranchForWorktree && activeProject) {
         setupScript = setupProjectScript(activeProject.scripts);
       }
       if (setupScript) {
@@ -2660,6 +2924,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           text: outgoingMessageText,
           attachments: turnAttachments,
         },
+        ...(providerMessageTextForSend !== undefined
+          ? { providerMessageText: providerMessageTextForSend }
+          : {}),
         model: selectedModel || undefined,
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
@@ -3050,6 +3317,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         commandId: newCommandId(),
         threadId: nextThreadId,
         projectId: activeProject.id,
+        sidechatSourceThreadId: activeThread.id,
         title: nextThreadTitle,
         model: nextThreadModel,
         runtimeMode,
@@ -3132,6 +3400,265 @@ export default function ChatView({ threadId }: ChatViewProps) {
     settings.enableAssistantStreaming,
     syncServerReadModel,
   ]);
+
+  const onReviewAssistantMessage = useCallback(
+    async (message: ChatMessage) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !activeProject ||
+        !isServerThread ||
+        isConnecting ||
+        isSendBusy ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const assistantMessageText = message.text.trim();
+      if (assistantMessageText.length === 0) return;
+
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const reviewPrompt = buildAgentReviewPrompt({
+        sourceThreadTitle: activeThread.title,
+        assistantMessageText,
+      });
+      const outgoingReviewPrompt = formatOutgoingPrompt({
+        provider: selectedProvider,
+        effort: selectedPromptEffort,
+        text: reviewPrompt,
+      });
+      const providerMessageText =
+        buildSidechatProviderMessage({
+          userMessageText: outgoingReviewPrompt,
+          sourceThread: activeThread,
+        }) ?? undefined;
+      const nextThreadTitle = truncateTitle(`Review: ${activeThread.title}`);
+      const nextThreadModel: ModelSlug =
+        selectedModel ||
+        (activeThread.model as ModelSlug) ||
+        (activeProject.model as ModelSlug) ||
+        DEFAULT_MODEL_BY_PROVIDER.codex;
+
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      const finish = () => {
+        sendInFlightRef.current = false;
+        resetSendPhase();
+      };
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          projectId: activeProject.id,
+          sidechatSourceThreadId: activeThread.id,
+          title: nextThreadTitle,
+          model: nextThreadModel,
+          runtimeMode,
+          interactionMode: "default",
+          branch: activeThread.branch,
+          worktreePath: activeThread.worktreePath,
+          createdAt,
+        })
+        .then(() =>
+          api.orchestration.dispatchCommand({
+            type: "thread.turn.start",
+            commandId: newCommandId(),
+            threadId: nextThreadId,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: outgoingReviewPrompt,
+              attachments: [],
+            },
+            ...(providerMessageText !== undefined ? { providerMessageText } : {}),
+            provider: selectedProvider,
+            model: selectedModel || undefined,
+            ...(selectedModelOptionsForDispatch
+              ? { modelOptions: selectedModelOptionsForDispatch }
+              : {}),
+            ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+            assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+            runtimeMode,
+            interactionMode: "default",
+            createdAt,
+          }),
+        )
+        .then(() => api.orchestration.getSnapshot())
+        .then((snapshot) => {
+          syncServerReadModel(snapshot);
+          const splitViewId = createSplitFromDrop({
+            sourceThreadId: activeThread.id,
+            droppedThreadId: nextThreadId,
+            direction: "horizontal",
+            side: "second",
+          });
+          toastManager.add({
+            type: "info",
+            title: "Review thread started",
+            description: "The reviewer has the source thread context and selected response.",
+          });
+          return navigate({
+            to: "/$threadId",
+            params: { threadId: nextThreadId },
+            search: (previous) => ({ ...previous, splitViewId }),
+          });
+        })
+        .catch(async (err) => {
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.delete",
+              commandId: newCommandId(),
+              threadId: nextThreadId,
+            })
+            .catch(() => undefined);
+          await api.orchestration
+            .getSnapshot()
+            .then((snapshot) => {
+              syncServerReadModel(snapshot);
+            })
+            .catch(() => undefined);
+          toastManager.add({
+            type: "error",
+            title: "Could not start review thread",
+            description:
+              err instanceof Error ? err.message : "An error occurred while creating the review.",
+          });
+        })
+        .then(finish, finish);
+    },
+    [
+      activeProject,
+      activeThread,
+      beginSendPhase,
+      createSplitFromDrop,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      navigate,
+      providerOptionsForDispatch,
+      resetSendPhase,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedPromptEffort,
+      selectedProvider,
+      settings.enableAssistantStreaming,
+      syncServerReadModel,
+    ],
+  );
+
+  const onSendAssistantMessageToSource = useCallback(
+    async (message: ChatMessage) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !activeThread.sidechatSourceThreadId ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const reviewerMessageText = message.text.trim();
+      if (reviewerMessageText.length === 0) return;
+
+      const sourceThreadId = activeThread.sidechatSourceThreadId;
+      let sourceThread = threads.find((thread) => thread.id === sourceThreadId) ?? null;
+      if (!sourceThread?.detailsLoaded) {
+        try {
+          const snapshot = await api.orchestration.getThreadSnapshot({ threadId: sourceThreadId });
+          syncServerThread(snapshot.thread);
+          sourceThread =
+            useStore.getState().threads.find((thread) => thread.id === sourceThreadId) ?? null;
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Could not load source thread",
+            description:
+              error instanceof Error
+                ? error.message
+                : "An error occurred while loading the source.",
+          });
+          return;
+        }
+      }
+      if (!sourceThread) return;
+      if (isSessionActivelyRunningTurn(sourceThread.latestTurn, sourceThread.session)) {
+        toastManager.add({
+          type: "warning",
+          title: "Source thread is busy",
+          description: "Wait for the current turn to finish, then send the review back.",
+        });
+        return;
+      }
+
+      const createdAt = new Date().toISOString();
+      const relayPrompt = buildAgentReviewRelayPrompt({
+        reviewThreadTitle: activeThread.title,
+        reviewerMessageText,
+      });
+
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      const finish = () => {
+        sendInFlightRef.current = false;
+        resetSendPhase();
+      };
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: sourceThread.id,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: relayPrompt,
+            attachments: [],
+          },
+          provider: sourceThread.session?.provider ?? selectedProvider,
+          model: (sourceThread.model as ModelSlug | null) ?? selectedModel ?? undefined,
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          createdAt,
+        })
+        .then(() => api.orchestration.getSnapshot())
+        .then((snapshot) => {
+          syncServerReadModel(snapshot);
+          toastManager.add({
+            type: "info",
+            title: "Sent to source thread",
+            description: "The original agent received the reviewer feedback.",
+          });
+        })
+        .catch((error) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not send to source",
+            description:
+              error instanceof Error ? error.message : "An error occurred while sending feedback.",
+          });
+        })
+        .then(finish, finish);
+    },
+    [
+      activeThread,
+      beginSendPhase,
+      providerOptionsForDispatch,
+      resetSendPhase,
+      selectedModel,
+      selectedProvider,
+      settings.enableAssistantStreaming,
+      syncServerReadModel,
+      syncServerThread,
+      threads,
+    ],
+  );
 
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
@@ -3297,8 +3824,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       if (item.type === "slash-command") {
-        if (item.command === "model") {
-          const replacement = "/model ";
+        if (item.command === "model" || item.command === "goal") {
+          const replacement = item.command === "model" ? "/model " : "/goal ";
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
             trigger.rangeEnd,
@@ -3315,7 +3842,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        if (item.command === "pet") {
+          void openPetCompanion();
+        } else {
+          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        }
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -3504,6 +4035,57 @@ export default function ChatView({ threadId }: ChatViewProps) {
     );
   }
 
+  if (!activeThread.detailsLoaded) {
+    return (
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background"
+        style={activeChatSurfaceStyle}
+      >
+        <header
+          className={cn(
+            "border-b border-border px-3 sm:px-5",
+            isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          )}
+          style={activeChatHeaderStyle}
+        >
+          <ChatHeader
+            activeThreadId={activeThread.id}
+            activeThreadTitle={activeThread.title}
+            activeProjectName={activeProject?.name}
+            isGitRepo={false}
+            openInCwd={null}
+            activeProjectScripts={activeProject?.scripts}
+            preferredScriptId={
+              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+            }
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            showDesktopActions={isElectron}
+            terminalAvailable={false}
+            terminalOpen={false}
+            terminalToggleShortcutLabel={terminalToggleShortcutLabel}
+            diffToggleShortcutLabel={diffPanelShortcutLabel}
+            gitCwd={null}
+            diffOpen={false}
+            onRunProjectScript={() => undefined}
+            onAddProjectScript={() => Promise.resolve()}
+            onUpdateProjectScript={() => Promise.resolve()}
+            onDeleteProjectScript={() => Promise.resolve()}
+            onToggleTerminal={() => undefined}
+            onToggleDiff={() => undefined}
+          />
+        </header>
+        <ThreadErrorBanner
+          error={activeThread.error}
+          onDismiss={() => setThreadError(activeThread.id, null)}
+        />
+        <div className="flex flex-1 items-center justify-center px-4 text-sm text-muted-foreground">
+          Loading thread...
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background"
@@ -3553,6 +4135,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
+      {activeThread.goal && (
+        <div className="border-border/60 border-b bg-muted/30 px-3 py-2 sm:px-5">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <span className="rounded border border-border/60 bg-background px-1.5 py-0.5 font-medium text-foreground">
+              Goal
+            </span>
+            <span className="min-w-0 truncate text-foreground">{activeThread.goal.objective}</span>
+            <span className="text-muted-foreground">
+              {formatGoalStatus(activeThread.goal.status)}
+            </span>
+            {formatGoalUsage(activeThread.goal) && (
+              <span className="text-muted-foreground">{formatGoalUsage(activeThread.goal)}</span>
+            )}
+          </div>
+        </div>
+      )}
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
@@ -3597,6 +4195,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeProject?.cwd ?? undefined}
+                {...(activeThread.sidechatSourceThreadId
+                  ? { onSendAssistantMessageToSource }
+                  : { onReviewAssistantMessage })}
               />
             </div>
 
@@ -3755,6 +4356,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           ))}
                         </div>
                       )}
+                    {canSelectDraftProject ? (
+                      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground/70">
+                        <span className="shrink-0">Work in</span>
+                        <select
+                          className="min-w-0 max-w-full rounded-md border border-border bg-secondary px-2 py-1 text-xs text-foreground outline-none focus:border-ring"
+                          value={draftProjectSelectValue}
+                          onChange={(event) => onDraftProjectSelect(event.target.value)}
+                        >
+                          <option value="">Don't work in a project</option>
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
                     <ComposerPromptEditor
                       ref={composerEditorRef}
                       value={

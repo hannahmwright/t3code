@@ -13,6 +13,7 @@ import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { ACTIVITY_INDEX_FILE_NAME } from "../../activity-index/Layers/ActivityIndexExport.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import {
@@ -25,6 +26,7 @@ import {
   ORCHESTRATION_PROJECTOR_NAMES,
   OrchestrationProjectionPipelineLive,
 } from "./ProjectionPipeline.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
@@ -51,7 +53,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const sql = yield* SqlClient.SqlClient;
+      const { stateDir } = yield* ServerConfig;
       const now = new Date().toISOString();
 
       yield* eventStore.append({
@@ -162,6 +167,50 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
+
+      const activityIndexPath = path.join(stateDir, ACTIVITY_INDEX_FILE_NAME);
+      const activityIndex = JSON.parse(yield* fileSystem.readFileString(activityIndexPath)) as {
+        readonly projects: ReadonlyArray<{
+          readonly projectId: string;
+          readonly projectName: string;
+          readonly workspaceRoot: string;
+          readonly workspaceName: string;
+          readonly updatedAt: string;
+        }>;
+        readonly threads: ReadonlyArray<{
+          readonly threadId: string;
+          readonly threadName: string;
+          readonly projectId: string;
+          readonly projectName: string;
+          readonly workspaceRoot: string;
+          readonly workspaceName: string;
+          readonly updatedAt: string;
+          readonly branch: string | null;
+          readonly worktreePath: string | null;
+        }>;
+      };
+      assert.deepEqual(activityIndex.projects, [
+        {
+          projectId: "project-1",
+          projectName: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+          workspaceName: "project-1",
+          updatedAt: now,
+        },
+      ]);
+      assert.deepEqual(activityIndex.threads, [
+        {
+          threadId: "thread-1",
+          threadName: "Thread 1",
+          projectId: "project-1",
+          projectName: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+          workspaceName: "project-1",
+          updatedAt: now,
+          branch: null,
+          worktreePath: null,
+        },
+      ]);
     }),
   );
 });
@@ -1698,6 +1747,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
     const messageId = MessageId.makeUnsafe("message-restart");
     const sourcePlanThreadId = ThreadId.makeUnsafe("thread-plan-source");
     const sourcePlanId = "plan-source";
+    const notificationTargetEndpoint = "https://push.example/subscription-1";
     const turnStartedAt = "2026-02-26T14:00:00.000Z";
     const sessionSetAt = "2026-02-26T14:00:05.000Z";
 
@@ -1722,6 +1772,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
             threadId: sourcePlanThreadId,
             planId: sourcePlanId,
           },
+          notificationTargetEndpoint,
           runtimeMode: "approval-required",
           createdAt: turnStartedAt,
         },
@@ -1775,6 +1826,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
         readonly userMessageId: string | null;
         readonly sourceProposedPlanThreadId: string | null;
         readonly sourceProposedPlanId: string | null;
+        readonly notificationTargetEndpoint: string | null;
         readonly startedAt: string;
       }>`
         SELECT
@@ -1782,6 +1834,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
           pending_message_id AS "userMessageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
+          notification_target_endpoint AS "notificationTargetEndpoint",
           started_at AS "startedAt"
         FROM projection_turns
         WHERE turn_id = ${turnId}
@@ -1794,6 +1847,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
         userMessageId: "message-restart",
         sourceProposedPlanThreadId: "thread-plan-source",
         sourceProposedPlanId: "plan-source",
+        notificationTargetEndpoint,
         startedAt: turnStartedAt,
       },
     ]);
@@ -1811,6 +1865,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
 
 const engineLayer = it.layer(
   OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -1880,6 +1935,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         type: "project.meta.update",
         commandId: CommandId.makeUnsafe("cmd-scripts-project-update"),
         projectId: ProjectId.makeUnsafe("project-scripts"),
+        setAside: true,
         scripts: [
           {
             id: "script-1",
@@ -1895,10 +1951,12 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
       const projectRows = yield* sql<{
         readonly scriptsJson: string;
         readonly defaultModel: string;
+        readonly setAside: number;
       }>`
         SELECT
           scripts_json AS "scriptsJson",
-          default_model AS "defaultModel"
+          default_model AS "defaultModel",
+          set_aside AS "setAside"
         FROM projection_projects
         WHERE project_id = 'project-scripts'
       `;
@@ -1907,6 +1965,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           scriptsJson:
             '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           defaultModel: "gpt-5",
+          setAside: 1,
         },
       ]);
     }),

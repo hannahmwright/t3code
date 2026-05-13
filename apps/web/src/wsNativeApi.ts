@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { getTurnNotificationTargetEndpoint } from "./turnNotificationTarget";
 import { type TransportState, WsTransport } from "./wsTransport";
 
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
@@ -220,11 +221,28 @@ export function createWsNativeApi(): NativeApi {
     },
     orchestration: {
       getSnapshot: () =>
-        transport.request(ORCHESTRATION_WS_METHODS.getSnapshot, undefined, {
-          timeoutMs: SNAPSHOT_REQUEST_TIMEOUT_MS,
-        }),
-      dispatchCommand: (command) =>
-        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
+        transport.request(
+          ORCHESTRATION_WS_METHODS.getSnapshot,
+          { detailMode: "active" },
+          {
+            timeoutMs: SNAPSHOT_REQUEST_TIMEOUT_MS,
+          },
+        ),
+      getThreadSnapshot: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.getThreadSnapshot, input),
+      dispatchCommand: (command) => {
+        const notificationTargetEndpoint =
+          command.type === "thread.turn.start" ? getTurnNotificationTargetEndpoint() : null;
+        return transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, {
+          command:
+            command.type === "thread.turn.start" && notificationTargetEndpoint
+              ? {
+                  ...command,
+                  notificationTargetEndpoint,
+                }
+              : command,
+        });
+      },
       getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
       getFullThreadDiff: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),

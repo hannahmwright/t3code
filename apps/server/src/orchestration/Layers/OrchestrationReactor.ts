@@ -19,8 +19,14 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* checkpointReactor.start;
   });
 
+  const drain: OrchestrationReactorShape["drain"] = Effect.all(
+    [providerRuntimeIngestion.drain, providerCommandReactor.drain, checkpointReactor.drain],
+    { concurrency: 1 },
+  ).pipe(Effect.asVoid);
+
   return {
     start,
+    drain,
   } satisfies OrchestrationReactorShape;
 });
 

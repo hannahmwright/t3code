@@ -13,6 +13,7 @@ import type {
   ProviderKind,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadGoalSnapshot,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -39,6 +40,31 @@ export interface ChatImageAttachment {
 }
 
 export type ChatAttachment = ChatImageAttachment;
+
+export interface VisualProofArtifact {
+  id: string;
+  kind: "image" | "video";
+  mimeType: string;
+  byteSize: number;
+  filename: string;
+  createdAt: string;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+}
+
+export interface VisualProofRun {
+  runId: string;
+  status: "started" | "step-captured" | "completed" | "failed";
+  cwd: string | null;
+  title: string;
+  summary: string;
+  artifacts: VisualProofArtifact[];
+  posterArtifactId: string | null;
+  videoArtifactId: string | null;
+  stepCount: number;
+  updatedAt: string;
+}
 
 export interface ChatMessage {
   id: MessageId;
@@ -89,6 +115,7 @@ export interface Project {
   cwd: string;
   model: string;
   expanded: boolean;
+  setAside?: boolean;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
@@ -105,7 +132,8 @@ export interface Workbook {
 export interface Thread {
   id: ThreadId;
   codexThreadId: string | null;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
+  sidechatSourceThreadId?: ThreadId | null;
   title: string;
   model: string;
   runtimeMode: RuntimeMode;
@@ -113,6 +141,7 @@ export interface Thread {
   session: ThreadSession | null;
   messages: ChatMessage[];
   proposedPlans: ProposedPlan[];
+  detailsLoaded: boolean;
   error: string | null;
   createdAt: string;
   updatedAt?: string | undefined;
@@ -120,6 +149,7 @@ export interface Thread {
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  goal?: ThreadGoalSnapshot | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }

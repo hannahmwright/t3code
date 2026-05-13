@@ -482,6 +482,15 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      setGoal: () =>
+        Effect.succeed({
+          objective: "test",
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+      getGoal: () => Effect.succeed(null),
+      clearGoal: () => Effect.succeed(true),
       stopSession,
       listSessions,
       hasSession,

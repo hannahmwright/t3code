@@ -182,6 +182,15 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     interruptTurn,
     respondToRequest,
     respondToUserInput,
+    setGoal: () =>
+      Effect.succeed({
+        objective: "test",
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    getGoal: () => Effect.succeed(null),
+    clearGoal: () => Effect.succeed(true),
     stopSession,
     listSessions,
     hasSession,
@@ -925,6 +934,54 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         received.map((event) => event.eventId),
         [asEventId("evt-seq-1"), asEventId("evt-seq-2"), asEventId("evt-seq-3")],
       );
+    }),
+  );
+
+  it.effect("stopAllSessions flushes shutdown runtime events and is idempotent", () =>
+    Effect.gen(function* () {
+      fanout.codex.stopAll.mockClear();
+      fanout.claude.stopAll.mockClear();
+
+      const provider = yield* ProviderService;
+      const session = yield* provider.startSession(asThreadId("thread-shutdown"), {
+        provider: "codex",
+        threadId: asThreadId("thread-shutdown"),
+        runtimeMode: "full-access",
+      });
+
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.take(provider.streamEvents, 1).pipe(
+        Stream.runForEach((event) => Ref.update(receivedRef, (current) => [...current, event])),
+        Effect.forkChild,
+      );
+      yield* sleep(50);
+
+      fanout.codex.stopAll.mockImplementationOnce(() =>
+        Effect.sync(() => {
+          fanout.codex.emit({
+            type: "session.exited",
+            eventId: asEventId("evt-shutdown-exited"),
+            provider: "codex",
+            createdAt: new Date().toISOString(),
+            threadId: session.threadId,
+            payload: {
+              reason: "shutdown",
+            },
+          });
+        }),
+      );
+
+      yield* provider.stopAllSessions();
+      yield* Fiber.join(consumer);
+      yield* provider.stopAllSessions();
+
+      const received = yield* Ref.get(receivedRef);
+      assert.deepEqual(
+        received.map((event) => event.eventId),
+        [asEventId("evt-shutdown-exited")],
+      );
+      assert.equal(fanout.codex.stopAll.mock.calls.length, 1);
+      assert.equal(fanout.claude.stopAll.mock.calls.length, 1);
     }),
   );
 

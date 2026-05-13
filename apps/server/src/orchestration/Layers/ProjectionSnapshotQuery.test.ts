@@ -47,6 +47,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           title,
           workspace_root,
           default_model,
+          set_aside,
           scripts_json,
           created_at,
           updated_at,
@@ -57,6 +58,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'Project 1',
           '/tmp/project-1',
           'gpt-5-codex',
+          1,
           '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           '2026-02-24T00:00:00.000Z',
           '2026-02-24T00:00:01.000Z',
@@ -248,6 +250,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           title: "Project 1",
           emoji: null,
           color: null,
+          setAside: true,
           workbookId: null,
           groupName: null,
           groupEmoji: null,
@@ -346,8 +349,94 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
+          detailsLoaded: true,
         },
       ]);
+    }),
+  );
+
+  it.effect("keeps old inactive thread details out of active snapshots", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const recentAt = new Date().toISOString();
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model,
+          set_aside,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-1',
+          'Project 1',
+          '/tmp/project-1',
+          'gpt-5-codex',
+          0,
+          '[]',
+          '2000-01-01T00:00:00.000Z',
+          '2000-01-01T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      for (const row of [
+        ["thread-old", "Old thread", "2000-01-01T00:00:00.000Z", "old message"],
+        ["thread-recent", "Recent thread", recentAt, "recent message"],
+      ] as const) {
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model,
+            branch,
+            worktree_path,
+            latest_turn_id,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (${row[0]}, 'project-1', ${row[1]}, 'gpt-5-codex', NULL, NULL, NULL, ${row[2]}, ${row[2]}, NULL)
+        `;
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id,
+            thread_id,
+            turn_id,
+            role,
+            text,
+            is_streaming,
+            created_at,
+            updated_at
+          )
+          VALUES (${`${row[0]}-message`}, ${row[0]}, NULL, 'assistant', ${row[3]}, 0, ${row[2]}, ${row[2]})
+        `;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot({ detailMode: "active" });
+      const oldThread = snapshot.threads.find((thread) => thread.id === "thread-old");
+      const recentThread = snapshot.threads.find((thread) => thread.id === "thread-recent");
+
+      assert.deepEqual(oldThread?.messages, []);
+      assert.equal(oldThread?.detailsLoaded, false);
+      assert.equal(recentThread?.detailsLoaded, true);
+      assert.equal(recentThread?.messages[0]?.text, "recent message");
     }),
   );
 
