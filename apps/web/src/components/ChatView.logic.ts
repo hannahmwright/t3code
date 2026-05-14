@@ -1,4 +1,5 @@
-import { ProjectId, type ThreadId } from "@t3tools/contracts";
+import { type ModelSlug, ProjectId, type ProviderKind, type ThreadId } from "@t3tools/contracts";
+import { inferProviderForModel } from "@t3tools/shared/model";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -165,10 +166,47 @@ export function buildAgentReviewPrompt(input: {
     "",
     "Focus on correctness, risks, regressions, missing tests, and the next concrete step. Be concise, but include enough detail for the original agent to continue without guessing.",
     "",
+    "Write the response so it can be sent back to the original agent. If everything looks good, say that clearly and tell the original agent it can proceed.",
+    "",
     "<assistant_response_to_review>",
     input.assistantMessageText.trim(),
     "</assistant_response_to_review>",
   ].join("\n");
+}
+
+type ReusableReviewThreadCandidate = Pick<
+  Thread,
+  "id" | "projectId" | "sidechatSourceThreadId" | "model" | "session" | "updatedAt" | "createdAt"
+>;
+
+function reviewThreadTimestamp(thread: ReusableReviewThreadCandidate): number {
+  const timestamp = thread.updatedAt ?? thread.session?.updatedAt ?? thread.createdAt;
+  const timestampMs = Date.parse(timestamp);
+  return Number.isNaN(timestampMs) ? Number.NEGATIVE_INFINITY : timestampMs;
+}
+
+export function findReusableReviewThread<T extends ReusableReviewThreadCandidate>(input: {
+  threads: ReadonlyArray<T>;
+  sourceThreadId: ThreadId;
+  sourceProjectId: Thread["projectId"];
+  reviewerProvider: ProviderKind;
+  reviewerModel: ModelSlug;
+}): T | null {
+  let match: T | null = null;
+  let matchTimestampMs = Number.NEGATIVE_INFINITY;
+  for (const thread of input.threads) {
+    if (thread.sidechatSourceThreadId !== input.sourceThreadId) continue;
+    if (thread.projectId !== input.sourceProjectId) continue;
+    if (thread.model !== input.reviewerModel) continue;
+    const provider = thread.session?.provider ?? inferProviderForModel(thread.model);
+    if (provider !== input.reviewerProvider) continue;
+    const timestampMs = reviewThreadTimestamp(thread);
+    if (timestampMs > matchTimestampMs) {
+      match = thread;
+      matchTimestampMs = timestampMs;
+    }
+  }
+  return match;
 }
 
 export function buildAgentReviewRelayPrompt(input: {

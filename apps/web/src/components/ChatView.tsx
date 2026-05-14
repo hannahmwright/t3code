@@ -184,6 +184,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   deriveComposerPrimaryActionState,
   deriveComposerSendState,
+  findReusableReviewThread,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   PullRequestDialogState,
@@ -3437,8 +3438,28 @@ export default function ChatView({ threadId, agentActivityLabel = null }: ChatVi
         reviewerModel: selection.model,
       });
 
+      const reusableReviewThread = findReusableReviewThread({
+        threads,
+        sourceThreadId: activeThread.id,
+        sourceProjectId: activeProject.id,
+        reviewerProvider: selection.provider,
+        reviewerModel: selection.model,
+      });
+      if (
+        reusableReviewThread &&
+        isSessionActivelyRunningTurn(reusableReviewThread.latestTurn, reusableReviewThread.session)
+      ) {
+        toastManager.add({
+          type: "warning",
+          title: "Reviewer thread is busy",
+          description: "Wait for the current review to finish, then ask for another review.",
+        });
+        return;
+      }
+
       const createdAt = new Date().toISOString();
-      const nextThreadId = newThreadId();
+      const reviewThreadId = reusableReviewThread?.id ?? newThreadId();
+      const isReusingReviewThread = reusableReviewThread !== null;
       const reviewPrompt = buildAgentReviewPrompt({
         sourceThreadTitle: activeThread.title,
         assistantMessageText,
@@ -3456,8 +3477,8 @@ export default function ChatView({ threadId, agentActivityLabel = null }: ChatVi
       const nextThreadTitle = truncateTitle(`Review: ${activeThread.title}`);
 
       sendInFlightRef.current = true;
-      setComposerDraftProvider(nextThreadId, selection.provider);
-      setComposerDraftModel(nextThreadId, selection.model);
+      setComposerDraftProvider(reviewThreadId, selection.provider);
+      setComposerDraftModel(reviewThreadId, selection.model);
       setStickyComposerModel(selection.model);
       beginSendPhase("sending-turn");
       const finish = () => {
@@ -3465,26 +3486,29 @@ export default function ChatView({ threadId, agentActivityLabel = null }: ChatVi
         resetSendPhase();
       };
 
-      await api.orchestration
-        .dispatchCommand({
-          type: "thread.create",
-          commandId: newCommandId(),
-          threadId: nextThreadId,
-          projectId: activeProject.id,
-          sidechatSourceThreadId: activeThread.id,
-          title: nextThreadTitle,
-          model: selection.model,
-          runtimeMode,
-          interactionMode: "default",
-          branch: activeThread.branch,
-          worktreePath: activeThread.worktreePath,
-          createdAt,
-        })
+      const createReviewThread = isReusingReviewThread
+        ? Promise.resolve()
+        : api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: reviewThreadId,
+            projectId: activeProject.id,
+            sidechatSourceThreadId: activeThread.id,
+            title: nextThreadTitle,
+            model: selection.model,
+            runtimeMode,
+            interactionMode: "default",
+            branch: activeThread.branch,
+            worktreePath: activeThread.worktreePath,
+            createdAt,
+          });
+
+      await createReviewThread
         .then(() =>
           api.orchestration.dispatchCommand({
             type: "thread.turn.start",
             commandId: newCommandId(),
-            threadId: nextThreadId,
+            threadId: reviewThreadId,
             message: {
               messageId: newMessageId(),
               role: "user",
@@ -3506,29 +3530,31 @@ export default function ChatView({ threadId, agentActivityLabel = null }: ChatVi
           syncServerReadModel(snapshot);
           const splitViewId = createSplitFromDrop({
             sourceThreadId: activeThread.id,
-            droppedThreadId: nextThreadId,
+            droppedThreadId: reviewThreadId,
             direction: "horizontal",
             side: "second",
           });
           toastManager.add({
             type: "info",
-            title: "Review thread started",
+            title: isReusingReviewThread ? "Review sent" : "Review thread started",
             description: `Using ${selection.model}.`,
           });
           return navigate({
             to: "/$threadId",
-            params: { threadId: nextThreadId },
+            params: { threadId: reviewThreadId },
             search: (previous) => ({ ...previous, splitViewId }),
           });
         })
         .catch(async (err) => {
-          await api.orchestration
-            .dispatchCommand({
-              type: "thread.delete",
-              commandId: newCommandId(),
-              threadId: nextThreadId,
-            })
-            .catch(() => undefined);
+          if (!isReusingReviewThread) {
+            await api.orchestration
+              .dispatchCommand({
+                type: "thread.delete",
+                commandId: newCommandId(),
+                threadId: reviewThreadId,
+              })
+              .catch(() => undefined);
+          }
           await api.orchestration
             .getSnapshot()
             .then((snapshot) => {
@@ -3561,6 +3587,7 @@ export default function ChatView({ threadId, agentActivityLabel = null }: ChatVi
       setStickyComposerModel,
       settings.enableAssistantStreaming,
       syncServerReadModel,
+      threads,
       updateSettings,
     ],
   );

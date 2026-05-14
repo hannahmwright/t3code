@@ -573,64 +573,82 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     reviewerProvider &&
                     reviewerModel &&
                     reviewerModelOptionsByProvider && (
-                      <Menu>
-                        <MenuTrigger
-                          render={
-                            <Button
-                              type="button"
-                              size="xs"
-                              variant="outline"
-                              title="Ask another thread to review this response"
-                            />
+                      <div className="inline-flex">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          className="rounded-r-none border-r-0"
+                          onClick={() =>
+                            onReviewAssistantMessage(row.message, {
+                              provider: reviewerProvider,
+                              model: reviewerModel,
+                            })
                           }
+                          title="Ask another thread to review this response"
                         >
                           <BotIcon className="size-3" />
                           Review with {selectedReviewerModelLabel ?? reviewerModel}
-                          <ChevronDownIcon className="size-3" />
-                        </MenuTrigger>
-                        <MenuPopup
-                          align="start"
-                          className="w-72 [--available-height:min(24rem,70vh)]"
-                        >
-                          {REVIEW_PROVIDER_OPTIONS.map((providerOption, providerIndex) => {
-                            const modelOptions =
-                              reviewerModelOptionsByProvider[providerOption.provider] ?? [];
-                            if (modelOptions.length === 0) return null;
-                            return (
-                              <MenuGroup key={providerOption.provider}>
-                                {providerIndex > 0 && <MenuSeparator />}
-                                <MenuGroupLabel>{providerOption.label}</MenuGroupLabel>
-                                {modelOptions.map((modelOption) => {
-                                  const selected =
-                                    reviewerProvider === providerOption.provider &&
-                                    reviewerModel === modelOption.slug;
-                                  return (
-                                    <MenuItem
-                                      key={`${providerOption.provider}:${modelOption.slug}`}
-                                      onClick={() =>
-                                        onReviewAssistantMessage(row.message, {
-                                          provider: providerOption.provider,
-                                          model: modelOption.slug as ModelSlug,
-                                        })
-                                      }
-                                    >
-                                      <CheckIcon
-                                        className={cn(
-                                          "size-3.5",
-                                          selected ? "opacity-100" : "opacity-0",
-                                        )}
-                                      />
-                                      <span className="min-w-0 flex-1 truncate">
-                                        {modelOption.name}
-                                      </span>
-                                    </MenuItem>
-                                  );
-                                })}
-                              </MenuGroup>
-                            );
-                          })}
-                        </MenuPopup>
-                      </Menu>
+                        </Button>
+                        <Menu>
+                          <MenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant="outline"
+                                className="rounded-l-none px-1.5"
+                                title="Choose reviewer model"
+                                aria-label="Choose reviewer model"
+                              />
+                            }
+                          >
+                            <ChevronDownIcon className="size-3" />
+                          </MenuTrigger>
+                          <MenuPopup
+                            align="start"
+                            className="w-72 [--available-height:min(24rem,70vh)]"
+                          >
+                            {REVIEW_PROVIDER_OPTIONS.map((providerOption, providerIndex) => {
+                              const modelOptions =
+                                reviewerModelOptionsByProvider[providerOption.provider] ?? [];
+                              if (modelOptions.length === 0) return null;
+                              return (
+                                <MenuGroup key={providerOption.provider}>
+                                  {providerIndex > 0 && <MenuSeparator />}
+                                  <MenuGroupLabel>{providerOption.label}</MenuGroupLabel>
+                                  {modelOptions.map((modelOption) => {
+                                    const selected =
+                                      reviewerProvider === providerOption.provider &&
+                                      reviewerModel === modelOption.slug;
+                                    return (
+                                      <MenuItem
+                                        key={`${providerOption.provider}:${modelOption.slug}`}
+                                        onClick={() =>
+                                          onReviewAssistantMessage(row.message, {
+                                            provider: providerOption.provider,
+                                            model: modelOption.slug as ModelSlug,
+                                          })
+                                        }
+                                      >
+                                        <CheckIcon
+                                          className={cn(
+                                            "size-3.5",
+                                            selected ? "opacity-100" : "opacity-0",
+                                          )}
+                                        />
+                                        <span className="min-w-0 flex-1 truncate">
+                                          {modelOption.name}
+                                        </span>
+                                      </MenuItem>
+                                    );
+                                  })}
+                                </MenuGroup>
+                              );
+                            })}
+                          </MenuPopup>
+                        </Menu>
+                      </div>
                     )}
                   {canActOnAssistantMessage && onSendAssistantMessageToSource && (
                     <Button

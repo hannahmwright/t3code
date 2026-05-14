@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type ModelSlug } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +8,7 @@ import {
   buildSidechatProviderMessage,
   deriveComposerPrimaryActionState,
   deriveComposerSendState,
+  findReusableReviewThread,
   shouldResetSendPhase,
 } from "./ChatView.logic";
 
@@ -119,6 +120,7 @@ describe("agent review prompt builders", () => {
     expect(prompt).toContain("<assistant_response_to_review>");
     expect(prompt).toContain("I changed connector cleanup.");
     expect(prompt).toContain("missing tests");
+    expect(prompt).toContain("If everything looks good");
   });
 
   it("builds a relay prompt that tells the source agent how to use reviewer feedback", () => {
@@ -130,6 +132,68 @@ describe("agent review prompt builders", () => {
     expect(prompt).toContain('Reviewer feedback from "Review: Canvas deletion bug"');
     expect(prompt).toContain("Connector deletion still needs a regression test.");
     expect(prompt).toContain("Please respond to this review in the original thread.");
+  });
+
+  it("finds the newest matching reusable review thread", () => {
+    const sourceThreadId = ThreadId.makeUnsafe("thread-source");
+    const projectId = ProjectId.makeUnsafe("project-1");
+    const reviewerModel = "claude-sonnet-4-6" as ModelSlug;
+    const olderThread = {
+      id: ThreadId.makeUnsafe("thread-review-older"),
+      projectId,
+      sidechatSourceThreadId: sourceThreadId,
+      model: reviewerModel,
+      session: {
+        provider: "claudeAgent" as const,
+        status: "ready" as const,
+        orchestrationStatus: "ready" as const,
+        createdAt: "2026-03-17T10:00:00.000Z",
+        updatedAt: "2026-03-17T10:00:00.000Z",
+      },
+      createdAt: "2026-03-17T10:00:00.000Z",
+      updatedAt: "2026-03-17T10:00:00.000Z",
+    };
+    const newerThread = {
+      ...olderThread,
+      id: ThreadId.makeUnsafe("thread-review-newer"),
+      createdAt: "2026-03-17T11:00:00.000Z",
+      updatedAt: "2026-03-17T11:00:00.000Z",
+    };
+
+    expect(
+      findReusableReviewThread({
+        threads: [olderThread, newerThread],
+        sourceThreadId,
+        sourceProjectId: projectId,
+        reviewerProvider: "claudeAgent",
+        reviewerModel,
+      })?.id,
+    ).toBe(newerThread.id);
+  });
+
+  it("does not reuse review threads with a different reviewer model", () => {
+    const sourceThreadId = ThreadId.makeUnsafe("thread-source");
+    const projectId = ProjectId.makeUnsafe("project-1");
+
+    expect(
+      findReusableReviewThread({
+        threads: [
+          {
+            id: ThreadId.makeUnsafe("thread-review"),
+            projectId,
+            sidechatSourceThreadId: sourceThreadId,
+            model: "gpt-5.4",
+            session: null,
+            createdAt: "2026-03-17T10:00:00.000Z",
+            updatedAt: "2026-03-17T10:00:00.000Z",
+          },
+        ],
+        sourceThreadId,
+        sourceProjectId: projectId,
+        reviewerProvider: "claudeAgent",
+        reviewerModel: "claude-sonnet-4-6" as ModelSlug,
+      }),
+    ).toBeNull();
   });
 });
 
