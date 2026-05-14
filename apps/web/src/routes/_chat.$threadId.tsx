@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import ChatView from "../components/ChatView";
+import { getLatestWorkThreadId, getSplitThreadActivityLabel } from "../agentActivity";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
   DiffPanelHeaderSkeleton,
@@ -105,6 +106,7 @@ function SplitChatLeaf(props: {
   splitView: SplitView;
   paneId: PaneId;
   threadId: ThreadId | null;
+  agentActivityLabel: string | null;
   isFocused: boolean;
   onFocus: (paneId: PaneId, threadId: ThreadId | null) => void;
   onClose: (paneId: PaneId) => void;
@@ -148,7 +150,11 @@ function SplitChatLeaf(props: {
           <XIcon className="size-3.5" />
         </Button>
         {props.threadId ? (
-          <ChatView key={props.threadId} threadId={props.threadId} />
+          <ChatView
+            key={props.threadId}
+            threadId={props.threadId}
+            agentActivityLabel={props.agentActivityLabel}
+          />
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground/60">
             Drop a chat here
@@ -165,6 +171,7 @@ function SplitChatTree(props: {
   onFocus: (paneId: PaneId, threadId: ThreadId | null) => void;
   onClose: (paneId: PaneId) => void;
   onDrop: (paneId: PaneId, payload: SplitChatDropPayload) => void;
+  getAgentActivityLabel: (threadId: ThreadId | null) => string | null;
 }) {
   if (props.pane.kind === "leaf") {
     return (
@@ -172,6 +179,7 @@ function SplitChatTree(props: {
         splitView={props.splitView}
         paneId={props.pane.id}
         threadId={props.pane.threadId}
+        agentActivityLabel={props.getAgentActivityLabel(props.pane.threadId)}
         isFocused={props.splitView.focusedPaneId === props.pane.id}
         onFocus={props.onFocus}
         onClose={props.onClose}
@@ -208,9 +216,28 @@ function SplitChatTree(props: {
 
 function SplitChatView(props: { splitView: SplitView; routeThreadId: ThreadId }) {
   const navigate = useNavigate();
+  const threads = useStore((store) => store.threads);
   const setFocusedPane = useSplitViewStore((store) => store.setFocusedPane);
   const dropThreadOnPane = useSplitViewStore((store) => store.dropThreadOnPane);
   const removePaneFromSplitView = useSplitViewStore((store) => store.removePaneFromSplitView);
+  const splitThreadIds = useMemo(
+    () =>
+      collectLeaves(props.splitView.root).flatMap((leaf) => (leaf.threadId ? [leaf.threadId] : [])),
+    [props.splitView.root],
+  );
+  const latestWorkThreadId = useMemo(
+    () => getLatestWorkThreadId({ threads, threadIds: splitThreadIds }),
+    [splitThreadIds, threads],
+  );
+  const threadById = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, thread])),
+    [threads],
+  );
+  const getAgentActivityLabel = useCallback(
+    (threadId: ThreadId | null) =>
+      threadId ? getSplitThreadActivityLabel(threadById.get(threadId), latestWorkThreadId) : null,
+    [latestWorkThreadId, threadById],
+  );
 
   const focusPane = useCallback(
     (paneId: PaneId, threadId: ThreadId | null) => {
@@ -302,6 +329,7 @@ function SplitChatView(props: { splitView: SplitView; routeThreadId: ThreadId })
         onFocus={focusPane}
         onClose={closePane}
         onDrop={handleDrop}
+        getAgentActivityLabel={getAgentActivityLabel}
       />
     </div>
   );

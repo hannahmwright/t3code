@@ -19,6 +19,8 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  agentLabel: string | null;
+  agentActivityLabel?: string | null;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -44,6 +46,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  agentLabel,
+  agentActivityLabel,
   isGitRepo,
   openInCwd,
   keybindings,
@@ -82,6 +86,16 @@ export const ChatHeader = memo(function ChatHeader({
         {activeProjectName && showDesktopActions && (
           <Badge variant="outline" className="min-w-0 shrink truncate">
             {activeProjectName}
+          </Badge>
+        )}
+        {agentLabel && (
+          <Badge variant="secondary" className="min-w-0 shrink truncate">
+            {agentLabel}
+          </Badge>
+        )}
+        {agentActivityLabel && (
+          <Badge variant="info" className="shrink-0">
+            {agentActivityLabel}
           </Badge>
         )}
         {activeProjectName && !isGitRepo && (

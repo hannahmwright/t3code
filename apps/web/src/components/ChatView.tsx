@@ -64,6 +64,7 @@ import {
   formatElapsed,
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
+import { formatThreadAgentLabel } from "../agentActivity";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -271,9 +272,10 @@ const terminalContextIdListsEqual = (
 
 interface ChatViewProps {
   threadId: ThreadId;
+  agentActivityLabel?: string | null;
 }
 
-export default function ChatView({ threadId }: ChatViewProps) {
+export default function ChatView({ threadId, agentActivityLabel = null }: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
@@ -510,6 +512,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
+  const activeAgentLabel = useMemo(() => formatThreadAgentLabel(activeThread), [activeThread]);
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
@@ -4063,6 +4066,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activeThreadId={activeThread.id}
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.name}
+            agentLabel={activeAgentLabel}
+            agentActivityLabel={agentActivityLabel}
             isGitRepo={false}
             openInCwd={null}
             activeProjectScripts={activeProject?.scripts}
@@ -4114,6 +4119,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          agentLabel={activeAgentLabel}
+          agentActivityLabel={agentActivityLabel}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
