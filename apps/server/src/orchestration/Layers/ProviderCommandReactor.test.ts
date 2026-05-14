@@ -332,7 +332,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
-  it("enables visual proof for demo-like turns without changing the persisted user text", async () => {
+  it("enables visual proof for explicit proof turns without changing the persisted user text", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -344,7 +344,7 @@ describe("ProviderCommandReactor", () => {
         message: {
           messageId: asMessageId("user-message-proof"),
           role: "user",
-          text: "please show me a screenshot proof of the app working",
+          text: "/proof please show me a screenshot proof of the app working",
           attachments: [],
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -357,6 +357,8 @@ describe("ProviderCommandReactor", () => {
     const providerInput = harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined;
     expect(providerInput?.input).toContain("T3 Visual Proof Enabled");
     expect(providerInput?.input).toContain("/api/visual-proof/");
+    expect(providerInput?.input).toContain("please show me a screenshot proof of the app working");
+    expect(providerInput?.input).not.toMatch(/^\/proof\b/i);
 
     await waitFor(async () => {
       const readModel = await Effect.runPromise(harness.engine.getReadModel());
@@ -371,7 +373,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.messages.find((message) => message.id === "user-message-proof")?.text).toBe(
-      "please show me a screenshot proof of the app working",
+      "/proof please show me a screenshot proof of the app working",
     );
   });
 

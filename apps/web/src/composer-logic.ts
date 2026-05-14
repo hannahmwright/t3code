@@ -2,7 +2,7 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "pet" | "goal";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "pet" | "goal" | "proof";
 
 export type ComposerGoalSlashCommand =
   | { action: "show" }
@@ -16,7 +16,14 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "pet", "goal"];
+const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
+  "model",
+  "plan",
+  "default",
+  "pet",
+  "goal",
+  "proof",
+];
 const isInlineTokenSegment = (
   segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -244,7 +251,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model" | "goal"> | null {
+): Exclude<ComposerSlashCommand, "model" | "goal" | "proof"> | null {
   const match = /^\/(plan|default|pet)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

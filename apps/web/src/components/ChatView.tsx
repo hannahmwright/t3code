@@ -1189,6 +1189,13 @@ export default function ChatView({ threadId, agentActivityLabel = null }: ChatVi
           label: "/goal",
           description: "View, set, or clear this thread goal",
         },
+        {
+          id: "slash:proof",
+          type: "slash-command",
+          command: "proof",
+          label: "/proof",
+          description: "Explicitly request visual proof for this turn",
+        },
       ];
       if (isElectron) {
         slashCommandItems.push({
@@ -3865,8 +3872,9 @@ export default function ChatView({ threadId, agentActivityLabel = null }: ChatVi
         return;
       }
       if (item.type === "slash-command") {
-        if (item.command === "model" || item.command === "goal") {
-          const replacement = item.command === "model" ? "/model " : "/goal ";
+        if (item.command === "model" || item.command === "goal" || item.command === "proof") {
+          const replacement =
+            item.command === "model" ? "/model " : item.command === "goal" ? "/goal " : "/proof ";
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
             trigger.rangeEnd,

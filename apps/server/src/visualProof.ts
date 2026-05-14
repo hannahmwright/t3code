@@ -388,9 +388,16 @@ export function failUnfinishedVisualProofRunsForTurn(input: {
 }
 
 export function shouldEnableVisualProofForPrompt(prompt: string): boolean {
-  return /\b(visual proof|proof|prove|demo|demonstrate|screenshot|screen ?shot|video|recording|validate|verification|show me it works)\b/i.test(
-    prompt,
-  );
+  return parseVisualProofPrompt(prompt) !== null;
+}
+
+export function parseVisualProofPrompt(prompt: string): string | null {
+  const match = /^\/proof(?:\s+([\s\S]*))?$/i.exec(prompt.trim());
+  if (!match) return null;
+  const proofPrompt = (match[1] ?? "").trim();
+  return proofPrompt.length > 0
+    ? proofPrompt
+    : "Capture visual proof for the current work before replying.";
 }
 
 export function buildVisualProofPromptInstructions(input: {

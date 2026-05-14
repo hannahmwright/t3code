@@ -11,6 +11,7 @@ import {
   buildVisualProofRunPayload,
   createVisualProofRunRequest,
   getVisualProofRun,
+  parseVisualProofPrompt,
   resolveVisualProofArtifactPath,
   shouldEnableVisualProofForPrompt,
 } from "./visualProof";
@@ -72,9 +73,16 @@ describe("visualProof", () => {
     });
   });
 
-  it("detects proof requests and builds helper instructions", () => {
+  it("detects explicit proof requests and builds helper instructions", () => {
     expect(shouldEnableVisualProofForPrompt("please show me a screenshot of it working")).toBe(
-      true,
+      false,
+    );
+    expect(shouldEnableVisualProofForPrompt("/proof please show me a screenshot")).toBe(true);
+    expect(parseVisualProofPrompt("/proof please show me a screenshot")).toBe(
+      "please show me a screenshot",
+    );
+    expect(parseVisualProofPrompt("/proof")).toBe(
+      "Capture visual proof for the current work before replying.",
     );
     expect(shouldEnableVisualProofForPrompt("rename this variable")).toBe(false);
     expect(

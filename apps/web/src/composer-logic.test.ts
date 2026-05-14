@@ -61,6 +61,18 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects proof slash command while typing", () => {
+    const text = "/pro";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "pro",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects @path trigger in the middle of existing text", () => {
     // User typed @ between "inspect " and "in this sentence"
     const text = "Please inspect @in this sentence";
@@ -251,6 +263,11 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+
+  it("does not parse proof as a standalone mode command", () => {
+    expect(parseStandaloneComposerSlashCommand("/proof")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/proof capture this")).toBeNull();
   });
 });
 

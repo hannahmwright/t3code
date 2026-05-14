@@ -35,7 +35,7 @@ import {
   buildVisualProofRunPayload,
   createVisualProofRunRequest,
   getVisualProofRun,
-  shouldEnableVisualProofForPrompt,
+  parseVisualProofPrompt,
 } from "../../visualProof.ts";
 
 type ProviderIntentEvent = Extract<
@@ -467,8 +467,9 @@ const make = Effect.gen(function* () {
       thread,
       projects: readModel.projects,
     });
+    const visualProofPrompt = normalizedInput ? parseVisualProofPrompt(normalizedInput) : null;
     const proofRequest =
-      normalizedInput && shouldEnableVisualProofForPrompt(normalizedInput)
+      visualProofPrompt !== null
         ? createVisualProofRunRequest({
             threadId: input.threadId,
             cwd: effectiveCwd ?? null,
@@ -477,8 +478,8 @@ const make = Effect.gen(function* () {
           })
         : null;
     const providerInput =
-      normalizedInput && proofRequest
-        ? `${normalizedInput}${buildVisualProofPromptInstructions({
+      visualProofPrompt !== null && proofRequest
+        ? `${visualProofPrompt}${buildVisualProofPromptInstructions({
             baseUrl: `http://127.0.0.1:${serverConfig.port}`,
             runId: proofRequest.runId,
             token: proofRequest.token,
